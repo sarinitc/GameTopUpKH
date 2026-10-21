@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: GameTopUp-KH
+
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:dev}
+
+server:
+  port: 8082
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    issuer: gametopup-api
+    access-token-expiration: 15m
+    refresh-token-expiration: 7d
+
+payment:
+  gateway: mock

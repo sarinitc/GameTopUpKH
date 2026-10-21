@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: gametopup-postgres
+    environment:
+      POSTGRES_DB: gametopup_db
+      POSTGRES_USER: gametopup_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "15440:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+volumes:
+  postgres_data:
