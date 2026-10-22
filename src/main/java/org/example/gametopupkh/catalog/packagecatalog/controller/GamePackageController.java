@@ -3,6 +3,7 @@ package org.example.gametopupkh.catalog.packagecatalog.controller;
 import java.util.List;
 import java.util.UUID;
 
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.example.gametopupkh.catalog.packagecatalog.dto.request.GamePackageRequest;
 import org.example.gametopupkh.catalog.packagecatalog.dto.response.GamePackageResponse;
 import org.example.gametopupkh.catalog.packagecatalog.service.GamePackageService;
@@ -38,6 +39,7 @@ public class GamePackageController {
     }
 
     @PostMapping("/api/v1/admin/packages")
+    @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ApiResponse<GamePackageResponse>> create(
             @Validated(GamePackageRequest.Create.class) @RequestBody GamePackageRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED)
@@ -45,6 +47,7 @@ public class GamePackageController {
     }
 
     @PutMapping("/api/v1/admin/packages/{id}")
+    @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ApiResponse<GamePackageResponse>> update(
             @PathVariable UUID id,
             @Validated(GamePackageRequest.Update.class) @RequestBody GamePackageRequest request) {
@@ -52,6 +55,7 @@ public class GamePackageController {
     }
 
     @PatchMapping("/api/v1/admin/packages/{id}/status")
+    @SecurityRequirement(name = "bearerAuth")
     public ResponseEntity<ApiResponse<GamePackageResponse>> updateStatus(
             @PathVariable UUID id,
             @Validated(GamePackageRequest.Status.class) @RequestBody GamePackageRequest request) {
