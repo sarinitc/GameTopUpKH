@@ -5,6 +5,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.example.gametopupkh.payment.PaymentStatus;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
@@ -29,6 +30,7 @@ public class MockPaymentGateway implements PaymentGateway {
     @Override
     public PaymentIntent createPayment(PaymentRequest request) {
         String reference = NAME + "_" + UUID.randomUUID().toString().replace("-", "");
+        Instant createdAt = Instant.now();
         PaymentIntent intent = new PaymentIntent(
                 NAME,
                 reference,
@@ -36,7 +38,10 @@ public class MockPaymentGateway implements PaymentGateway {
                 request.amount(),
                 request.currency(),
                 "/api/v1/payments/mock/" + reference + "/confirm",
-                Instant.now());
+                createdAt,
+                "MOCK-QR-" + reference,
+                "/api/v1/payments/mock/" + reference + "/qr.png",
+                createdAt.plusSeconds(300));
         intents.put(reference, intent);
         return intent;
     }
@@ -54,7 +59,10 @@ public class MockPaymentGateway implements PaymentGateway {
                 intent.amount(),
                 intent.currency(),
                 intent.redirectUrl(),
-                intent.createdAt());
+                intent.createdAt(),
+                intent.qrString(),
+                intent.qrImageUrl(),
+                intent.expiresAt());
         intents.put(gatewayReference, completed);
         return completed;
     }

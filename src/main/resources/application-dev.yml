@@ -12,3 +12,20 @@ spring:
       ddl-auto: none
     open-in-view: false
     show-sql: false
+
+payment:
+  gateway: ${PAYMENT_GATEWAY:mock}
+  aba:
+    base-url: ${ABA_PAYWAY_BASE_URL:https://checkout-sandbox.payway.com.kh}
+    merchant-id: ${ABA_PAYWAY_MERCHANT_ID:}
+    api-key: ${ABA_PAYWAY_API_KEY:}
+    create-path: ${ABA_PAYWAY_CREATE_PATH:/api/payment-gateway/v1/payments/generate-qr}
+    status-path: ${ABA_PAYWAY_STATUS_PATH:/api/payment-gateway/v1/payments/check-transaction-2}
+    purchase-path: ${ABA_PAYWAY_PURCHASE_PATH:/api/payment-gateway/v1/payments/purchase}
+    payment-option: ${ABA_PAYWAY_PAYMENT_OPTION:abapay_khqr}
+    qr-image-template: ${ABA_PAYWAY_QR_IMAGE_TEMPLATE:template3_color}
+    lifetime-minutes: ${ABA_PAYWAY_LIFETIME_MINUTES:30}
+    callback-url: ${ABA_PAYWAY_CALLBACK_URL:http://localhost:8082/api/v1/payments/aba/callback}
+    callback-secret: ${ABA_PAYWAY_CALLBACK_SECRET:}
+  reconcile:
+    cooldown: ${PAYMENT_RECONCILE_COOLDOWN:PT30S}

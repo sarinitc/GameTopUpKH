@@ -17,3 +17,9 @@ app:
 
 payment:
   gateway: mock
+
+supplier:
+  client: ${SUPPLIER_CLIENT:mock}
+  max-attempts: ${SUPPLIER_MAX_ATTEMPTS:3}
+  mock:
+    fail: ${SUPPLIER_MOCK_FAIL:false}

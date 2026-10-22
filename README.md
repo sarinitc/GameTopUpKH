@@ -41,6 +41,110 @@ shared `common` / `config` / `security` packages. The application entry point is
 The payment provider is chosen with `payment.gateway` (`mock` by default, `aba` for
 AbaPayWay). Only the matching implementation is registered.
 
+### Payment structure
+
+```text
+payment/
+├── Payment.java
+├── PaymentEvent.java
+├── PaymentStatus.java
+├── PaymentProvider.java
+├── PaymentRepository.java
+├── PaymentEventRepository.java
+├── PaymentService.java
+├── PaymentServiceImpl.java
+├── PaymentController.java
+├── dto/
+│   ├── CreatePaymentResponse.java
+│   └── PaymentStatusResponse.java
+├── gateway/
+│   ├── PaymentGateway.java
+│   └── MockPaymentGateway.java
+└── aba/
+    ├── AbaPayWayGateway.java
+    ├── AbaPayWayClient.java
+    ├── AbaPayWayProperties.java
+    ├── AbaPayWayHashService.java
+    ├── AbaPayWayCallbackController.java
+    ├── AbaPayWayCallbackVerifier.java
+    ├── AbaPayWayPaymentMapper.java
+    └── dto/
+        ├── AbaQrRequest.java
+        ├── AbaQrResponse.java
+        ├── AbaCheckTransactionRequest.java
+        ├── AbaCheckTransactionResponse.java
+        └── AbaCallbackRequest.java
+```
+
+The mock and ABA PayWay adapters are implemented. ABA uses the official generate-QR
+and check-transaction-2 JSON APIs with HMAC-SHA512 request hashes by default;
+explicitly configured non-official paths retain the legacy configurable transport.
+ABA configuration, HTTP transport, and response mapping live in separate classes.
+The gateway's provider-neutral `PaymentRequest`, `PaymentIntent`, and
+`PaymentGatewayException` are nested types of `PaymentGateway`; `PaymentStatus`
+lives in the payment root.
+
+Payments are persisted before the provider is contacted, and a local reference is
+reserved with a unique constraint so retries reuse the same payment instead of
+creating a second charge. The provider status is authoritative; checkout callbacks
+only trigger a provider status lookup. Amount/currency mismatches and payments whose
+order is no longer payable are moved to `NEEDS_REVIEW` for staff review.
+
+Payment endpoints:
+
+| Method | Path | Access |
+| --- | --- | --- |
+| POST | `/api/v1/orders/{orderId}/payments/aba` | authenticated owner |
+| GET | `/api/v1/payments/{paymentId}` | authenticated owner or admin |
+| POST | `/api/v1/payments/aba/callback` | public provider callback |
+| POST | `/api/v1/admin/payments/{paymentId}/reconcile` | `ADMIN` |
+| POST | `/api/v1/dev/payments/{paymentId}/success` | public, mock gateway only |
+| GET/POST | `/api/v1/payments/mock/{reference}/confirm` | public, mock gateway only |
+
+While `payment.gateway=mock`, use either mock confirmation endpoint from Swagger to
+complete the payment and move its order to `PAID`. Both endpoints accept a payment id,
+local reference or gateway reference. The mock controller is not registered when the
+`aba` gateway is active.
+
+Reconciliation writes append-only `PaymentEvent` audit rows and is throttled per
+payment with `payment.reconcile.cooldown` (default `PT30S`); a throttled non-final
+reconciliation returns `429`. Set `payment.aba.callback-secret` to require
+HMAC-SHA512 verification of callback payloads. The ABA adapter signs requests and
+validates provider status codes; the `mock` gateway remains the default for local
+development.
+
+## Supplier fulfillment
+
+A completed payment starts supplier fulfillment for its order. The order moves from
+`PAID` to `PROCESSING`, the supplier call is recorded as a `FulfillmentAttempt`, and
+the order becomes `COMPLETED` on success. There is at most one fulfillment per order,
+so duplicate payment callbacks cannot deliver the same top-up twice.
+
+Failed supplier calls are retried up to `supplier.max-attempts` (default `3`). When
+all attempts fail, the fulfillment and order move to `NEEDS_REVIEW`; staff can retry
+without taking another payment by calling `FulfillmentService.retry(orderId)`. The
+`mock` supplier always succeeds unless `supplier.mock.fail=true` is set.
+
+| Property | Description |
+| --- | --- |
+| `supplier.client` | Supplier adapter, currently `mock` (default) |
+| `supplier.max-attempts` | Attempts per fulfillment or manual retry |
+| `supplier.mock.fail` | Set `true` to exercise the failure and review path |
+
+### Module files
+
+| File | Responsibility |
+| --- | --- |
+| `fulfillment/Fulfillment.java` | Maps the fulfillments table to a Java entity |
+| `fulfillment/FulfillmentStatus.java` | Lifecycle of a supplier fulfillment |
+| `fulfillment/FulfillmentAttempt.java` | Append-only supplier attempt audit |
+| `fulfillment/FulfillmentRepository.java` | Reads and writes fulfillments with JPA |
+| `fulfillment/FulfillmentAttemptRepository.java` | Reads and writes attempts with JPA |
+| `fulfillment/FulfillmentService.java` | Defines fulfillment and retry operations |
+| `fulfillment/FulfillmentServiceImpl.java` | Calls the supplier and updates order status |
+| `fulfillment/supplier/SupplierClient.java` | Supplier adapter contract and request/result types |
+| `fulfillment/supplier/MockSupplierClient.java` | Development supplier that accepts deliveries |
+
 ## API documentation
 
 Swagger UI is served by springdoc-openapi:
