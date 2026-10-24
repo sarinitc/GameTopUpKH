@@ -1,5 +1,6 @@
 package org.example.gametopupkh.payment;
 
+import java.util.List;
 import java.util.UUID;
 
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
@@ -15,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -44,6 +46,12 @@ public class PaymentController {
         PaymentStatusResponse payment = paymentService.getPayment(
                 paymentId, currentUserId(principal), isAdmin(principal));
         return ResponseEntity.ok(ApiResponse.ok(payment));
+    }
+
+    @GetMapping("/api/v1/admin/payments")
+    public ResponseEntity<ApiResponse<List<PaymentStatusResponse>>> listAll(
+            @RequestParam(required = false) PaymentStatus status) {
+        return ResponseEntity.ok(ApiResponse.ok(paymentService.findAll(status)));
     }
 
     @PostMapping("/api/v1/admin/payments/{paymentId}/reconcile")

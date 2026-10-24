@@ -1,6 +1,4 @@
-package org.example.gametopupkh.fulfillment.supplier;
-
-import java.util.UUID;
+package org.example.gametopupkh.supplier.integration;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -24,18 +22,22 @@ public class MockSupplierClient implements SupplierClient {
     }
 
     @Override
+    public String key() {
+        return "mock";
+    }
+
+    @Override
     public String name() {
         return NAME;
     }
 
     @Override
-    public SupplierResult fulfill(SupplierRequest request) {
+    public SupplierTopupResponse fulfill(SupplierTopupRequest request) {
         if (fail) {
-            return SupplierResult.failure("Mock supplier is configured to reject deliveries");
+            return SupplierTopupResponse.failure("Mock supplier is configured to reject deliveries");
         }
-        String reference = "MOCK-" + request.orderNumber() + "-"
-                + UUID.randomUUID().toString().substring(0, 8).toUpperCase();
-        return SupplierResult.success(reference,
+        String reference = "MOCK-" + request.orderNumber();
+        return SupplierTopupResponse.success(reference,
                 "Mock top-up delivered for player " + request.playerId());
     }
 }

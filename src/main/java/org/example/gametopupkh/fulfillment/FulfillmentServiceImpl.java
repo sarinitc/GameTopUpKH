@@ -6,10 +6,13 @@ import java.util.Optional;
 import java.util.UUID;
 
 import org.example.gametopupkh.common.exception.ApiException;
-import org.example.gametopupkh.fulfillment.supplier.SupplierClient;
-import org.example.gametopupkh.fulfillment.supplier.SupplierClient.SupplierException;
-import org.example.gametopupkh.fulfillment.supplier.SupplierClient.SupplierRequest;
-import org.example.gametopupkh.fulfillment.supplier.SupplierClient.SupplierResult;
+import org.example.gametopupkh.supplier.entity.SupplierProduct;
+import org.example.gametopupkh.supplier.service.SupplierSelectionService;
+import org.example.gametopupkh.supplier.integration.SupplierClient;
+import org.example.gametopupkh.supplier.integration.SupplierClientRegistry;
+import org.example.gametopupkh.supplier.integration.SupplierClient.SupplierException;
+import org.example.gametopupkh.supplier.integration.SupplierTopupRequest;
+import org.example.gametopupkh.supplier.integration.SupplierTopupResponse;
 import org.example.gametopupkh.order.Order;
 import org.example.gametopupkh.order.OrderRepository;
 import org.example.gametopupkh.order.OrderStatus;
@@ -27,13 +30,15 @@ public class FulfillmentServiceImpl implements FulfillmentService {
 
     private static final Logger log = LoggerFactory.getLogger(FulfillmentServiceImpl.class);
     private static final int MAX_MESSAGE_LENGTH = 500;
+    private static final int MAX_REFERENCE_LENGTH = 255;
     private static final int MAX_HISTORY_NOTE_LENGTH = 255;
 
     private final FulfillmentRepository fulfillmentRepository;
     private final FulfillmentAttemptRepository attemptRepository;
     private final OrderRepository orderRepository;
     private final OrderStatusHistoryRepository orderStatusHistoryRepository;
-    private final SupplierClient supplierClient;
+    private final SupplierClientRegistry supplierClients;
+    private final SupplierSelectionService supplierSelectionService;
     private final int maxAttempts;
 
     public FulfillmentServiceImpl(
@@ -41,13 +46,15 @@ public class FulfillmentServiceImpl implements FulfillmentService {
             FulfillmentAttemptRepository attemptRepository,
             OrderRepository orderRepository,
             OrderStatusHistoryRepository orderStatusHistoryRepository,
-            SupplierClient supplierClient,
+            SupplierClientRegistry supplierClients,
+            SupplierSelectionService supplierSelectionService,
             @Value("${supplier.max-attempts:3}") int maxAttempts) {
         this.fulfillmentRepository = fulfillmentRepository;
         this.attemptRepository = attemptRepository;
         this.orderRepository = orderRepository;
         this.orderStatusHistoryRepository = orderStatusHistoryRepository;
-        this.supplierClient = supplierClient;
+        this.supplierClients = supplierClients;
+        this.supplierSelectionService = supplierSelectionService;
         this.maxAttempts = Math.max(1, maxAttempts);
     }
 
@@ -95,6 +102,14 @@ public class FulfillmentServiceImpl implements FulfillmentService {
     }
 
     @Override
+    @Transactional
+    public Fulfillment retryFulfillment(UUID fulfillmentId) {
+        Fulfillment fulfillment = fulfillmentRepository.findById(fulfillmentId)
+                .orElseThrow(() -> fulfillmentNotFound(fulfillmentId));
+        return retry(fulfillment.getOrderId());
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public Optional<Fulfillment> findByOrderId(UUID orderId) {
         return fulfillmentRepository.findByOrderId(orderId);
@@ -109,11 +124,55 @@ public class FulfillmentServiceImpl implements FulfillmentService {
         return attemptRepository.findAllByFulfillmentIdOrderByAttemptNumberAsc(fulfillment.getId());
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public FulfillmentResponse findResponseByOrderId(UUID orderId) {
+        Fulfillment fulfillment = fulfillmentRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "FULFILLMENT_NOT_FOUND",
+                        "Fulfillment for order " + orderId + " was not found"));
+        return responseFor(fulfillment);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public FulfillmentResponse findResponseById(UUID fulfillmentId) {
+        Fulfillment fulfillment = fulfillmentRepository.findById(fulfillmentId)
+                .orElseThrow(() -> fulfillmentNotFound(fulfillmentId));
+        return responseFor(fulfillment);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<FulfillmentResponse> findAllResponses(FulfillmentStatus status) {
+        List<Fulfillment> fulfillments = status == null
+                ? fulfillmentRepository.findAllByOrderByCreatedAtDesc()
+                : fulfillmentRepository.findAllByStatusOrderByCreatedAtDesc(status);
+        return fulfillments.stream().map(this::responseFor).toList();
+    }
+
+    private FulfillmentResponse responseFor(Fulfillment fulfillment) {
+        List<FulfillmentAttempt> attempts =
+                attemptRepository.findAllByFulfillmentIdOrderByAttemptNumberAsc(fulfillment.getId());
+        return FulfillmentResponse.from(fulfillment, attempts);
+    }
+
+    private ApiException fulfillmentNotFound(UUID fulfillmentId) {
+        return new ApiException(HttpStatus.NOT_FOUND, "FULFILLMENT_NOT_FOUND",
+                "Fulfillment " + fulfillmentId + " was not found");
+    }
+
     private Fulfillment resumeExisting(Order order, Fulfillment fulfillment) {
         return switch (fulfillment.getStatus()) {
             case SUCCEEDED -> fulfillment;
             case PROCESSING, FAILED -> fulfillment;
-            case PENDING -> runAttempts(order, fulfillment);
+            case PENDING -> {
+                if (order.getStatus() != OrderStatus.PAID
+                        && order.getStatus() != OrderStatus.PROCESSING) {
+                    throw conflict("ORDER_NOT_FULFILLABLE",
+                            "The order is not in a state that can be fulfilled");
+                }
+                yield runAttempts(order, fulfillment);
+            }
         };
     }
 
@@ -126,16 +185,36 @@ public class FulfillmentServiceImpl implements FulfillmentService {
     }
 
     private Fulfillment runAttempts(Order order, Fulfillment fulfillment) {
+        SupplierClient supplierClient = supplierClients.getConfiguredClient();
         Instant now = Instant.now();
         if (fulfillment.getStartedAt() == null) {
             fulfillment.setStartedAt(now);
         }
         fulfillment.setStatus(FulfillmentStatus.PROCESSING);
+        fulfillment.setCompletedAt(null);
+        fulfillment.setLastError(null);
+        // Select mapping before first attempt if not already selected
+        if (fulfillment.getSupplierProductId() == null) {
+            try {
+                SupplierProduct selected = supplierSelectionService.selectForPackage(order.getPackageId(),
+                        order.getCurrency());
+                fulfillment.setSupplierId(selected.getSupplierId());
+                fulfillment.setSupplierProductId(selected.getId());
+                fulfillment.setSupplierSku(selected.getExternalSku());
+                fulfillment.setSupplierAdapterKey(supplierClient.key());
+            } catch (ApiException ex) {
+                fulfillment.setLastError(truncate(ex.getMessage(), MAX_MESSAGE_LENGTH));
+                fulfillment = fulfillmentRepository.save(fulfillment);
+                return markFailed(order, fulfillment);
+            }
+        } else if (fulfillment.getSupplierAdapterKey() == null) {
+            fulfillment.setSupplierAdapterKey(supplierClient.key());
+        }
         fulfillment = fulfillmentRepository.save(fulfillment);
         transitionOrder(order, OrderStatus.PROCESSING,
                 "Fulfillment started with " + supplierClient.name());
 
-        SupplierRequest request = requestFor(order);
+        SupplierTopupRequest request = requestFor(order);
         int attemptLimit = fulfillment.getAttemptCount() + maxAttempts;
         while (fulfillment.getAttemptCount() < attemptLimit) {
             int attemptNumber = fulfillment.getAttemptCount() + 1;
@@ -148,15 +227,15 @@ public class FulfillmentServiceImpl implements FulfillmentService {
             attempt.setStatus(FulfillmentAttempt.Status.PENDING);
             attempt = attemptRepository.save(attempt);
 
-            SupplierResult result;
+            SupplierTopupResponse result;
             try {
                 result = supplierClient.fulfill(request);
             } catch (SupplierException e) {
-                result = SupplierResult.failure("The supplier rejected the delivery");
+                result = SupplierTopupResponse.failure("The supplier rejected the delivery");
                 log.warn("Supplier {} rejected fulfillment attempt {} for order {}",
                         supplierClient.name(), attemptNumber, order.getId());
             } catch (RuntimeException e) {
-                result = SupplierResult.failure("The supplier call failed unexpectedly");
+                result = SupplierTopupResponse.failure("The supplier call failed unexpectedly");
                 log.error("Supplier {} failed during fulfillment attempt {} for order {} ({})",
                         supplierClient.name(), attemptNumber, order.getId(), e.getClass().getSimpleName());
             }
@@ -172,8 +251,8 @@ public class FulfillmentServiceImpl implements FulfillmentService {
     }
 
     private Fulfillment markSucceeded(Order order, Fulfillment fulfillment,
-            FulfillmentAttempt attempt, SupplierResult result) {
-        String reference = truncate(result.supplierReference(), MAX_MESSAGE_LENGTH);
+            FulfillmentAttempt attempt, SupplierTopupResponse result) {
+        String reference = truncate(result.supplierReference(), MAX_REFERENCE_LENGTH);
         String message = messageOrDefault(result.message(), "Top-up delivered");
 
         attempt.setStatus(FulfillmentAttempt.Status.SUCCESS);
@@ -194,7 +273,7 @@ public class FulfillmentServiceImpl implements FulfillmentService {
     }
 
     private void markAttemptFailed(Fulfillment fulfillment, FulfillmentAttempt attempt,
-            SupplierResult result) {
+            SupplierTopupResponse result) {
         String message = result == null
                 ? "The supplier returned no result"
                 : messageOrDefault(result.message(), "The supplier rejected the delivery");
@@ -219,8 +298,8 @@ public class FulfillmentServiceImpl implements FulfillmentService {
         return fulfillment;
     }
 
-    private SupplierRequest requestFor(Order order) {
-        return new SupplierRequest(
+    private SupplierTopupRequest requestFor(Order order) {
+        return new SupplierTopupRequest(
                 order.getId(),
                 order.getOrderNumber(),
                 order.getPackageId(),
@@ -246,7 +325,9 @@ public class FulfillmentServiceImpl implements FulfillmentService {
     }
 
     private Order requireOrder(UUID orderId) {
-        return orderRepository.findById(orderId)
+        // Lock the order even before a fulfillment exists, so initial delivery
+        // and manual retries serialize across callbacks and application instances.
+        return orderRepository.findByIdForUpdate(orderId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "ORDER_NOT_FOUND",
                         "Order " + orderId + " was not found"));
     }

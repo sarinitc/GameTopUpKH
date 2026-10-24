@@ -1,0 +1,138 @@
+package org.example.gametopupkh.supplier.service.impl;
+
+import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
+
+import org.example.gametopupkh.common.exception.ApiException;
+import org.example.gametopupkh.supplier.dto.request.SupplierProductRequest;
+import org.example.gametopupkh.supplier.dto.request.SupplierRequest;
+import org.example.gametopupkh.supplier.dto.request.SupplierStatusRequest;
+import org.example.gametopupkh.supplier.dto.response.SupplierProductResponse;
+import org.example.gametopupkh.supplier.dto.response.SupplierResponse;
+import org.example.gametopupkh.supplier.entity.Supplier;
+import org.example.gametopupkh.supplier.entity.SupplierProduct;
+import org.example.gametopupkh.supplier.entity.SupplierStatus;
+import org.example.gametopupkh.supplier.repository.SupplierProductRepository;
+import org.example.gametopupkh.supplier.repository.SupplierRepository;
+import org.example.gametopupkh.supplier.service.SupplierService;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class SupplierServiceImpl implements SupplierService {
+
+    private final SupplierRepository supplierRepository;
+    private final SupplierProductRepository supplierProductRepository;
+
+    public SupplierServiceImpl(SupplierRepository supplierRepository, SupplierProductRepository supplierProductRepository) {
+        this.supplierRepository = supplierRepository;
+        this.supplierProductRepository = supplierProductRepository;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SupplierResponse> findAll() {
+        return supplierRepository.findAll().stream()
+                .map(SupplierResponse::from)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public SupplierResponse create(SupplierRequest request) {
+        String name = request.name() == null ? null : request.name().trim();
+        if (name == null || name.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "SUPPLIER_NAME_REQUIRED", "Supplier name is required");
+        }
+        if (supplierRepository.existsByNameIgnoreCase(name)) {
+            throw new ApiException(HttpStatus.CONFLICT, "SUPPLIER_NAME_EXISTS", "A supplier with that name already exists");
+        }
+        Supplier supplier = new Supplier();
+        supplier.setName(name);
+        supplier.setStatus(resolveStatus(request.status(), request.active()));
+        return SupplierResponse.from(supplierRepository.save(supplier));
+    }
+
+    @Override
+    @Transactional
+    public SupplierResponse updateStatus(UUID id, SupplierStatusRequest request) {
+        Supplier supplier = supplierRepository.findById(id)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SUPPLIER_NOT_FOUND", "Supplier " + id + " was not found"));
+        SupplierStatus status = resolveStatus(request.status(), request.active());
+        supplier.setStatus(status);
+        return SupplierResponse.from(supplierRepository.save(supplier));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<SupplierProductResponse> findAllProducts() {
+        return supplierProductRepository.findAll().stream()
+                .map(SupplierProductResponse::from)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public SupplierProductResponse createProduct(SupplierProductRequest request) {
+        if (request.supplierId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "SUPPLIER_ID_REQUIRED", "Supplier id is required");
+        }
+        if (request.packageId() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "PACKAGE_ID_REQUIRED", "Package id is required");
+        }
+        String externalSku = request.externalSku() == null ? null : request.externalSku().trim();
+        if (externalSku == null || externalSku.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "EXTERNAL_SKU_REQUIRED", "External SKU is required");
+        }
+
+        Supplier supplier = supplierRepository.findById(request.supplierId())
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SUPPLIER_NOT_FOUND", "Supplier " + request.supplierId() + " was not found"));
+
+        if (supplierProductRepository.existsBySupplierIdAndExternalSku(supplier.getId(), externalSku)) {
+            throw new ApiException(HttpStatus.CONFLICT, "SUPPLIER_PRODUCT_EXISTS", "Supplier product with that external SKU already exists");
+        }
+
+        SupplierProduct product = new SupplierProduct();
+        product.setSupplier(supplier);
+        product.setPackageId(request.packageId());
+        product.setExternalSku(externalSku);
+        product.setCostPrice(request.costPrice());
+        if (request.costPrice() == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "COST_PRICE_REQUIRED", "Cost price is required");
+        }
+        product.setCurrency(normalizeCurrency(request.currency()));
+        product.setActive(Boolean.TRUE.equals(request.active()) || request.active() == null ? request.active() == null ? true : request.active() : request.active());
+        if (request.active() == null) {
+            product.setActive(true);
+        }
+        return SupplierProductResponse.from(supplierProductRepository.save(product));
+    }
+
+    private SupplierStatus resolveStatus(String status, Boolean active) {
+        if (status != null && !status.isBlank()) {
+            String normalized = status.trim().toUpperCase(Locale.ROOT);
+            try {
+                return SupplierStatus.valueOf(normalized);
+            } catch (IllegalArgumentException ex) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_SUPPLIER_STATUS", "Supplier status must be ACTIVE, INACTIVE, or SUSPENDED");
+            }
+        }
+        if (active != null) {
+            return Boolean.TRUE.equals(active) ? SupplierStatus.ACTIVE : SupplierStatus.INACTIVE;
+        }
+        return SupplierStatus.INACTIVE;
+    }
+
+    private String normalizeCurrency(String currency) {
+        if (currency == null || currency.isBlank()) {
+            return "USD";
+        }
+        String normalized = currency.trim().toUpperCase(Locale.ROOT);
+        if (!normalized.matches("^[A-Z]{3}$")) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_CURRENCY", "Currency must be a 3-letter ISO code");
+        }
+        return normalized;
+    }
+}

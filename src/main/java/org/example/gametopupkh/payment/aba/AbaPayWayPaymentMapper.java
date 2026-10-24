@@ -66,7 +66,7 @@ public class AbaPayWayPaymentMapper {
                 Instant.now(),
                 text(response, "qrString", "qr_string", "qr_code", "qr", "qrCode"),
                 text(response, "qrImage", "qr_image", "qr_image_url", "qr_code_url"),
-                instant(response, "expires_at", "expiry", "valid_until"));
+                instant(response, "expires_at", "expiry", "valid_until", "expire_in"));
     }
 
     private void requireSuccessfulCall(JsonNode response) {

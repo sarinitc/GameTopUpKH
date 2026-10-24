@@ -29,7 +29,29 @@ public interface FulfillmentService {
      */
     Fulfillment retry(UUID orderId);
 
+    /**
+     * Retries the fulfilment with the given id. The endpoint addresses a
+     * fulfilment directly, so the owning order is resolved first.
+     */
+    Fulfillment retryFulfillment(UUID fulfillmentId);
+
     Optional<Fulfillment> findByOrderId(UUID orderId);
 
     List<FulfillmentAttempt> findAttempts(UUID orderId);
+
+    /**
+     * @return the delivery status and attempt history for an order
+     */
+    FulfillmentResponse findResponseByOrderId(UUID orderId);
+
+    /**
+     * @return the delivery status and attempt history for a fulfilment id
+     */
+    FulfillmentResponse findResponseById(UUID fulfillmentId);
+
+    /**
+     * @param status optional status filter
+     * @return every fulfilment, newest first
+     */
+    List<FulfillmentResponse> findAllResponses(FulfillmentStatus status);
 }

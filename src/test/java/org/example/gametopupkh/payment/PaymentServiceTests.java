@@ -45,7 +45,7 @@ import static org.mockito.Mockito.when;
         "spring.datasource.username=sa", "spring.datasource.password=",
         "spring.jpa.hibernate.ddl-auto=create-drop", "spring.flyway.enabled=false",
         "app.jwt.secret=payment-service-test-secret-at-least-thirty-two-bytes",
-        "payment.gateway=mock"
+        "payment.gateway=mock", "fulfillment.worker.enabled=false"
 })
 class PaymentServiceTests {
 

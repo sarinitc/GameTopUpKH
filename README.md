@@ -60,6 +60,11 @@ payment/
 ├── gateway/
 │   ├── PaymentGateway.java
 │   └── MockPaymentGateway.java
+├── reconciliation/
+│   ├── PaymentReconciliationJob.java
+│   ├── PaymentReconciliationResult.java
+│   ├── PaymentReconciliationService.java
+│   └── PaymentReconciliationServiceImpl.java
 └── aba/
     ├── AbaPayWayGateway.java
     ├── AbaPayWayClient.java
@@ -102,7 +107,8 @@ Payment endpoints:
 | GET/POST | `/api/v1/payments/mock/{reference}/confirm` | public, mock gateway only |
 
 While `payment.gateway=mock`, use either mock confirmation endpoint from Swagger to
-complete the payment and move its order to `PAID`. Both endpoints accept a payment id,
+complete the payment and deliver its order through the configured supplier. With the
+default mock supplier, the order reaches `COMPLETED`. Both endpoints accept a payment id,
 local reference or gateway reference. The mock controller is not registered when the
 `aba` gateway is active.
 
@@ -113,23 +119,177 @@ HMAC-SHA512 verification of callback payloads. The ABA adapter signs requests an
 validates provider status codes; the `mock` gateway remains the default for local
 development.
 
+### Scheduled reconciliation
+
+While the ABA gateway is active, `PaymentReconciliationJob` periodically inspects
+unresolved ABA payments (`INITIALIZING`, `PENDING` and `NEEDS_REVIEW`). It selects a
+bounded batch oldest first, skipping records newer than `payment.reconciliation.min-age`
+and records checked within `payment.reconcile.cooldown`. Each provider lookup happens
+before the write transaction; verified results go through the same amount/currency
+checks, order transitions, audit events and after-commit fulfillment as a staff
+reconciliation. One provider failure is recorded as `RECONCILIATION_ERROR` and does not
+stop the rest of the batch. Other gateways and final payments are not inspected.
+
+| Property | Description |
+| --- | --- |
+| `payment.reconciliation.enabled` | Enable scheduled scans (default `true`); set `PAYMENT_RECONCILIATION_ENABLED=false` to disable |
+| `payment.reconciliation.batch-size` | Maximum payments per scan, a positive integer (default `50`) |
+| `payment.reconciliation.fixed-delay` | Delay after each scan finishes (default `PT1M`) |
+| `payment.reconciliation.initial-delay` | Delay before the first scan (default `PT30S`) |
+| `payment.reconciliation.min-age` | Minimum age before a payment is eligible (default `PT1M`) |
+
+## Supplier management
+
+Supplier records and package mappings are managed by `ADMIN` users. The module
+uses the existing `suppliers` and `supplier_products` tables; no additional
+database migration is needed.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/api/v1/admin/suppliers` | Create a supplier |
+| GET | `/api/v1/admin/suppliers` | List suppliers with pagination; optional `status` filter |
+| GET | `/api/v1/admin/suppliers/{id}` | Get supplier details |
+| PUT | `/api/v1/admin/suppliers/{id}` | Update the supplier name |
+| PATCH | `/api/v1/admin/suppliers/{id}/status` | Set `ACTIVE`, `INACTIVE` or `SUSPENDED` |
+| POST | `/api/v1/admin/supplier-products` | Map a package to a supplier |
+| GET | `/api/v1/admin/supplier-products` | List mappings; optional `supplierId`, `packageId`, `active` filters |
+| GET | `/api/v1/admin/supplier-products/{id}` | Get mapping details |
+| PUT | `/api/v1/admin/supplier-products/{id}` | Update external SKU, cost and optional currency |
+| PATCH | `/api/v1/admin/supplier-products/{id}/status` | Enable or disable a mapping |
+
+The supplier list accepts zero-based `page` (default `0`, minimum `0`), `size`
+(default `20`, range `1`–`100`), and optional `status` (`ACTIVE`, `INACTIVE` or
+`SUSPENDED`). Results are always sorted by `createdAt DESC`, then `id DESC` to
+break ties. All routes remain `ADMIN`-only.
+
+Example request:
+
+```http
+GET /api/v1/admin/suppliers?page=0&size=20&status=ACTIVE
+```
+
+Example response when no active suppliers match:
+
+```json
+{
+  "success": true,
+  "code": "OK",
+  "message": "Success",
+  "data": {
+    "content": [],
+    "page": 0,
+    "size": 20,
+    "totalElements": 0,
+    "totalPages": 0
+  },
+  "timestamp": "2026-10-23T00:00:00Z"
+}
+```
+
+The existing `ApiResponse` envelope is preserved, but `data` is now a pagination
+object instead of an array. Clients must read supplier records from `data.content`;
+each record retains the existing `SupplierResponse` fields. `page`, `size` and
+`totalPages` are integers, and `totalElements` is a long integer counting matching
+suppliers. A valid page beyond the last page returns `200` with empty `content`
+and the actual totals.
+
+Negative `page`, `size` outside `1`–`100`, or an offset (`page * size`) greater than
+`2147483647` returns `400` with code `INVALID_PAGINATION`. Non-integer pagination
+parameters return `400` with code `HTTP_400` in the existing error envelope.
+Supplier-product listing and mutation endpoints are unchanged. This pagination
+change adds no migration or audit-history implementation.
+
+Create an active supplier (omitting `status` creates an `INACTIVE` supplier):
+
+```json
+{
+  "name": "Demo Supplier",
+  "status": "ACTIVE"
+}
+```
+
+Use the returned supplier ID and an existing active catalog package ID to create
+a mapping:
+
+```json
+{
+  "supplierId": "<supplier UUID>",
+  "packageId": "<package UUID>",
+  "externalSku": "MLBB-86",
+  "costPrice": 1.10,
+  "currency": "USD"
+}
+```
+
+Mappings default to active and currency defaults to `USD`. Names and SKUs are
+trimmed and limited to 150 characters; external SKU case is preserved. Cost may
+be zero, must be nonnegative, and allows at most ten integer and two fractional
+digits. Currency must be three uppercase letters. A supplier's external SKU
+must be unique; different suppliers may use the same SKU.
+
+For PUT, send `externalSku`, `costPrice` and optionally `currency`; omitting
+currency retains its current value. Supplier and package IDs cannot be reassigned.
+Use PATCH with `{"active":false}` or `{"active":true}` for mapping status, and
+`{"status":"SUSPENDED"}` for supplier status. Creating or enabling a mapping
+requires an active supplier and active package. Disabling remains available
+after a parent is deactivated. Supplier status changes preserve existing mapping
+records and their active flags. Missing resources return 404, invalid requests
+return 400, and duplicate SKUs or inactive-parent conflicts return 409.
+
+These endpoints maintain supplier data. Delivery still uses the globally
+configured adapter (`supplier.client=mock` by default); it does not yet route
+orders using these mappings or send their external SKUs to a real provider.
+`SupplierClientRegistry` resolves stable adapter keys, independently of editable
+supplier names, and rejects unknown or duplicate keys.
+
 ## Supplier fulfillment
 
-A completed payment starts supplier fulfillment for its order. The order moves from
-`PAID` to `PROCESSING`, the supplier call is recorded as a `FulfillmentAttempt`, and
+A verified payment starts supplier fulfillment after the payment transaction commits.
+The order moves from `PAID` to `PROCESSING`, the supplier call is recorded as a
+`FulfillmentAttempt`, and
 the order becomes `COMPLETED` on success. There is at most one fulfillment per order,
-so duplicate payment callbacks cannot deliver the same top-up twice.
+and delivery/retry calls lock the order to serialize concurrent requests. Repeated
+callbacks reuse the existing fulfillment. Mock delivery references are stable per
+order (`MOCK-<orderNumber>`), including across application restarts.
 
 Failed supplier calls are retried up to `supplier.max-attempts` (default `3`). When
-all attempts fail, the fulfillment and order move to `NEEDS_REVIEW`; staff can retry
+all attempts fail, the fulfillment becomes `FAILED` and the order moves to `NEEDS_REVIEW`.
+The verified payment remains `COMPLETED`. Staff-side application code can retry
 without taking another payment by calling `FulfillmentService.retry(orderId)`. The
 `mock` supplier always succeeds unless `supplier.mock.fail=true` is set.
+
+If fulfillment could not start (for example, a transient database error), repeating
+the payment callback or reconciling the completed payment starts it again. The
+`FulfillmentWorker` also recovers eligible orders automatically: every 30 seconds,
+it scans up to 50 orders, oldest first, for paid orders with missing or pending
+fulfillment, plus processing orders with pending fulfillment. Each delivery uses
+its own transaction; a failed startup does not stop the remaining batch. Exhausted
+supplier failures require the explicit `retry` operation; callbacks and worker
+scans do not reset their attempt budget. A rolled-back payment transaction never
+starts delivery.
+
+For local testing, keep `SUPPLIER_CLIENT=mock` alongside either `PAYMENT_GATEWAY=mock`
+or the configured ABA sandbox gateway. Confirm the payment, then read the order
+through the existing order API: the normal path is `PAID` -> `PROCESSING` ->
+`COMPLETED`. Set `SUPPLIER_MOCK_FAIL=true` and restart to exercise the review path.
+`FulfillmentService.findAttempts(orderId)` exposes the recorded attempt history;
+`FulfillmentService.retry(orderId)` is a service operation, with no public retry endpoint.
+`FulfillmentResponse.from(fulfillment, attempts)` creates an immutable response
+snapshot containing delivery status and attempt history.
+
+This adapter simulates delivery; it does not credit a real game account. Delivery
+is synchronous with bounded retries. A durable queue and real supplier status
+reconciliation are outside this mock module.
 
 | Property | Description |
 | --- | --- |
 | `supplier.client` | Supplier adapter, currently `mock` (default) |
 | `supplier.max-attempts` | Attempts per fulfillment or manual retry |
 | `supplier.mock.fail` | Set `true` to exercise the failure and review path |
+| `fulfillment.worker.enabled` | Enable recovery scans (default `true`); set `FULFILLMENT_WORKER_ENABLED=false` to disable |
+| `fulfillment.worker.batch-size` | Maximum orders per scan, a positive integer (default `50`) |
+| `fulfillment.worker.fixed-delay` | Delay after each scan finishes (default `PT30S`) |
+| `fulfillment.worker.initial-delay` | Delay before the first scan (default `PT30S`) |
 
 ### Module files
 
@@ -142,8 +302,44 @@ without taking another payment by calling `FulfillmentService.retry(orderId)`. T
 | `fulfillment/FulfillmentAttemptRepository.java` | Reads and writes attempts with JPA |
 | `fulfillment/FulfillmentService.java` | Defines fulfillment and retry operations |
 | `fulfillment/FulfillmentServiceImpl.java` | Calls the supplier and updates order status |
-| `fulfillment/supplier/SupplierClient.java` | Supplier adapter contract and request/result types |
-| `fulfillment/supplier/MockSupplierClient.java` | Development supplier that accepts deliveries |
+| `fulfillment/FulfillmentWorker.java` | Scheduled, bounded recovery of deliveries that have not started |
+| `fulfillment/FulfillmentResponse.java` | Immutable delivery status and attempt history |
+| `supplier/integration/SupplierClient.java` | Supplier adapter contract and stable adapter key |
+| `supplier/integration/MockSupplierClient.java` | Development supplier that accepts deliveries |
+| `supplier/integration/SupplierClientRegistry.java` | Resolves the configured adapter by key |
+| `supplier/integration/SupplierTopupRequest.java` | Order, package, player, zone and quantity sent to the supplier |
+| `supplier/integration/SupplierTopupResponse.java` | Delivery outcome, supplier reference and message |
+
+## Audit trail
+
+Successful administrative mutations are appended to the `audit_logs` table. Each
+entry records the action, actor snapshot, resource, request description, IP address
+and UTC timestamp. Audit rows are read-only through the API; there is no endpoint to
+edit or delete them. Failed mutations and read-only requests are not recorded.
+
+| Method | Endpoint | Access |
+| --- | --- | --- |
+| GET | `/api/v1/admin/audit-logs` | `ADMIN` |
+| GET | `/api/v1/admin/audit-logs/{id}` | `ADMIN` |
+
+The list endpoint supports zero-based `page` (default `0`), `size` (default `20`,
+range `1`–`100`), and optional filters:
+
+| Parameter | Meaning |
+| --- | --- |
+| `action` | `CREATE`, `UPDATE`, `DELETE`, `STATUS_CHANGE`, `RETRY`, `RECONCILE`, `REFUND`, `LOGIN` or `LOGOUT` |
+| `actorId` or `actor` | Actor user id; `actor` also accepts an email address |
+| `actorEmail` | Actor email snapshot, case-insensitive |
+| `entityType` | Resource type such as `games`, `suppliers` or `payments`, case-insensitive |
+| `entityId` | Resource identifier |
+| `from` / `to` | Inclusive ISO-8601 instants, for example `2026-01-01T00:00:00Z` |
+
+Results are ordered newest first, with the id as a tie-breaker. Negative pages,
+sizes outside the allowed range and offsets above `2147483647` return
+`INVALID_PAGINATION`; a `from` timestamp later than `to` returns
+`INVALID_DATE_RANGE`. Unknown ids return `AUDIT_LOG_NOT_FOUND`. The trail is
+created by migration `V10__audit_logs.sql`; take a normal database backup before
+applying it to an existing environment.
 
 ## API documentation
 

@@ -30,7 +30,6 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
-import org.springframework.transaction.annotation.Transactional;
 
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -38,9 +37,17 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.profiles.active=test",
+        "spring.datasource.url=jdbc:h2:mem:payment-api;MODE=PostgreSQL;DB_CLOSE_DELAY=-1",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=sa", "spring.datasource.password=",
+        "spring.jpa.hibernate.ddl-auto=create-drop", "spring.flyway.enabled=false",
+        "app.jwt.secret=payment-api-test-secret-at-least-thirty-two-bytes",
+        "payment.gateway=mock", "supplier.client=mock", "supplier.mock.fail=false",
+        "fulfillment.worker.enabled=false"
+})
 @AutoConfigureMockMvc
-@Transactional
 class PaymentApiTests {
 
     private static final String PASSWORD = "secret123";
@@ -301,7 +308,11 @@ class PaymentApiTests {
     }
 
     private UUID createUser(String roleName) {
-        Role role = roleRepository.findByName(roleName).orElseThrow();
+        Role role = roleRepository.findByName(roleName).orElseGet(() -> {
+            Role created = new Role();
+            created.setName(roleName);
+            return roleRepository.save(created);
+        });
         User user = new User();
         user.setFullName("Test User");
         user.setEmail("payment-user-" + UUID.randomUUID() + "@example.com");

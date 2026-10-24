@@ -2,6 +2,7 @@ package org.example.gametopupkh.payment.aba;
 
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Base64;
 
 import com.jayway.jsonpath.JsonPath;
@@ -84,7 +85,8 @@ class AbaPayWayOfficialApiTests {
                           "amount":10.50, "currency":"USD",
                           "qrString":"00020101021229",
                           "qrImage":"data:image/png;base64,abc",
-                          "abapay_deeplink":"abaapp://pay"
+                          "abapay_deeplink":"abaapp://pay",
+                          "expire_in":1772594519
                         }
                         """, MediaType.APPLICATION_JSON));
 
@@ -97,6 +99,7 @@ class AbaPayWayOfficialApiTests {
         assertThat(intent.qrString()).isEqualTo("00020101021229");
         assertThat(intent.qrImageUrl()).isEqualTo("data:image/png;base64,abc");
         assertThat(intent.redirectUrl()).isEqualTo("abaapp://pay");
+        assertThat(intent.expiresAt()).isEqualTo(Instant.ofEpochSecond(1772594519));
         server.verify();
     }
 

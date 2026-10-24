@@ -34,6 +34,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -50,6 +51,9 @@ public class PaymentServiceImpl implements PaymentService {
     private static final String EVENT_RECONCILE = "RECONCILE";
     private static final String EVENT_RECONCILE_ERROR = "RECONCILE_ERROR";
     private static final String EVENT_RECONCILE_THROTTLED = "RECONCILE_THROTTLED";
+    private static final String EVENT_RECONCILIATION = "RECONCILIATION";
+    private static final String EVENT_RECONCILIATION_SKIPPED = "RECONCILIATION_SKIPPED";
+    private static final String EVENT_RECONCILIATION_ERROR = "RECONCILIATION_ERROR";
     private static final String EVENT_MOCK_SUCCESS = "MOCK_SUCCESS";
     private static final String ADMIN_ROLE = "ADMIN";
 
@@ -111,6 +115,7 @@ public class PaymentServiceImpl implements PaymentService {
         Optional<Payment> existing = paymentRepository.findByOrderId(orderId);
         if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
             if (existing.isPresent() && existing.get().getStatus().isSuccessful()) {
+                fulfillCompletedPayment(existing.get());
                 return CreatePaymentResponse.from(existing.get());
             }
             throw conflict("PAYMENT_NOT_PAYABLE",
@@ -180,6 +185,7 @@ public class PaymentServiceImpl implements PaymentService {
         requireMatchingProvider(payment, PaymentProvider.MOCK);
 
         if (payment.getStatus().isFinal()) {
+            fulfillCompletedPayment(payment);
             return PaymentStatusResponse.from(payment);
         }
 
@@ -205,12 +211,14 @@ public class PaymentServiceImpl implements PaymentService {
 
         String normalizedKey = truncate(eventKey.trim(), 255);
         if (paymentEventRepository.existsByPaymentIdAndEventKey(payment.getId(), normalizedKey)) {
+            fulfillCompletedPayment(payment);
             return;
         }
 
         if (payment.getStatus().isFinal()) {
             recordEvent(payment.getId(), EVENT_CALLBACK, normalizedKey,
                     "Provider callback for an already final payment", null);
+            fulfillCompletedPayment(payment);
             return;
         }
 
@@ -234,19 +242,32 @@ public class PaymentServiceImpl implements PaymentService {
     @Override
     public PaymentStatusResponse reconcile(UUID paymentId, UUID adminId) {
         User admin = requireActiveAdmin(adminId);
+        return reconcileInternal(paymentId, admin.getId(),
+                EVENT_RECONCILE, EVENT_RECONCILE_THROTTLED, EVENT_RECONCILE_ERROR);
+    }
+
+    @Override
+    public PaymentStatusResponse reconcileUnattended(UUID paymentId) {
+        return reconcileInternal(paymentId, null,
+                EVENT_RECONCILIATION, EVENT_RECONCILIATION_SKIPPED, EVENT_RECONCILIATION_ERROR);
+    }
+
+    private PaymentStatusResponse reconcileInternal(UUID paymentId, UUID actorUserId,
+            String eventType, String throttledEventType, String errorEventType) {
         Payment payment = requirePayment(paymentId);
         PaymentProvider provider = providerOf(gateway.name());
         requireMatchingProvider(payment, provider);
 
         if (payment.getStatus().isFinal()) {
-            recordEvent(payment.getId(), EVENT_RECONCILE, null,
-                    "Reconciliation skipped because the payment is already final", admin.getId());
+            recordEvent(payment.getId(), eventType, null,
+                    "Reconciliation skipped because the payment is already final", actorUserId);
+            fulfillCompletedPayment(payment);
             return PaymentStatusResponse.from(payment);
         }
 
         if (isThrottled(payment)) {
-            recordEvent(payment.getId(), EVENT_RECONCILE_THROTTLED, null,
-                    "Reconciliation skipped by the per-payment cooldown", admin.getId());
+            recordEvent(payment.getId(), throttledEventType, null,
+                    "Reconciliation skipped by the per-payment cooldown", actorUserId);
             throw new ApiException(HttpStatus.TOO_MANY_REQUESTS, "PAYMENT_RECONCILIATION_THROTTLED",
                     "This payment was checked recently; retry after the cooldown");
         }
@@ -255,16 +276,17 @@ public class PaymentServiceImpl implements PaymentService {
         try {
             intent = providerIntent(payment, provider);
         } catch (PaymentGatewayException e) {
-            recordEvent(payment.getId(), EVENT_RECONCILE_ERROR, null,
-                    "Provider status check failed during reconciliation", admin.getId());
+            recordEvent(payment.getId(), errorEventType, null,
+                    "Provider status check failed during reconciliation", actorUserId);
             throw providerUnavailable();
         }
-        Payment updated = applyProviderIntent(payment.getId(), intent, EVENT_RECONCILE, admin.getId(), true, null);
+        Payment updated = applyProviderIntent(payment.getId(), intent, eventType, actorUserId, true, null);
         return PaymentStatusResponse.from(updated);
     }
 
     private CreatePaymentResponse resume(Payment payment, PaymentProvider provider) {
         requireMatchingProvider(payment, provider);
+        fulfillCompletedPayment(payment);
         return switch (payment.getStatus()) {
             case INITIALIZING -> throw conflict("PAYMENT_IN_PROGRESS",
                     "A payment for this order is already being initialized");
@@ -372,10 +394,25 @@ public class PaymentServiceImpl implements PaymentService {
         if (payment.getStatus() != PaymentStatus.COMPLETED) {
             return;
         }
+        UUID orderId = payment.getOrderId();
+        if (TransactionSynchronizationManager.isActualTransactionActive()
+                && TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    startFulfillment(orderId);
+                }
+            });
+            return;
+        }
+        startFulfillment(orderId);
+    }
+
+    private void startFulfillment(UUID orderId) {
         try {
-            fulfillmentService.fulfillOrder(payment.getOrderId());
+            requiresNewTransaction.executeWithoutResult(status -> fulfillmentService.fulfillOrder(orderId));
         } catch (RuntimeException e) {
-            log.warn("Could not start fulfillment for order {}", payment.getOrderId(), e);
+            log.warn("Could not start fulfillment for order {}", orderId, e);
         }
     }
 
@@ -606,6 +643,15 @@ public class PaymentServiceImpl implements PaymentService {
     private ApiException providerUnavailable() {
         return new ApiException(HttpStatus.BAD_GATEWAY, "PAYMENT_PROVIDER_UNAVAILABLE",
                 "The payment provider could not be reached");
+    }
+
+    @Override
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
+    public java.util.List<PaymentStatusResponse> findAll(PaymentStatus status) {
+        java.util.List<Payment> payments = status == null
+                ? paymentRepository.findAllByOrderByCreatedAtDesc()
+                : paymentRepository.findAllByStatusOrderByCreatedAtDesc(status);
+        return payments.stream().map(PaymentStatusResponse::from).toList();
     }
 
     private record Reservation(Payment payment, boolean created) {

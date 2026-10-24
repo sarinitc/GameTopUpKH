@@ -1,6 +1,4 @@
-package org.example.gametopupkh.fulfillment.supplier;
-
-import java.util.UUID;
+package org.example.gametopupkh.supplier.integration;
 
 /**
  * Outbound adapter used to deliver a paid top-up to a supplier.
@@ -10,8 +8,11 @@ import java.util.UUID;
  */
 public interface SupplierClient {
 
+    /** Stable adapter key used by {@code supplier.client}, independent of display names. */
+    String key();
+
     /**
-     * Short supplier name persisted in the attempt audit.
+     * Short supplier name used in logs and the order status history.
      */
     default String name() {
         return getClass().getSimpleName();
@@ -21,32 +22,7 @@ public interface SupplierClient {
      * Delivers the top-up. A rejected delivery is returned as an unsuccessful
      * result; transport and protocol failures raise {@link SupplierException}.
      */
-    SupplierResult fulfill(SupplierRequest request);
-
-    record SupplierRequest(
-            UUID orderId,
-            String orderNumber,
-            UUID packageId,
-            String gameName,
-            String packageName,
-            String playerId,
-            String zoneId,
-            int quantity) {
-    }
-
-    record SupplierResult(
-            boolean success,
-            String supplierReference,
-            String message) {
-
-        public static SupplierResult success(String supplierReference, String message) {
-            return new SupplierResult(true, supplierReference, message);
-        }
-
-        public static SupplierResult failure(String message) {
-            return new SupplierResult(false, null, message);
-        }
-    }
+    SupplierTopupResponse fulfill(SupplierTopupRequest request);
 
     /** Raised when the supplier cannot be reached or returns an unusable response. */
     class SupplierException extends RuntimeException {

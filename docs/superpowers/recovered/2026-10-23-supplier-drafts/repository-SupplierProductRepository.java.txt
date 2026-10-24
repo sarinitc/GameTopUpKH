@@ -1,0 +1,11 @@
+package org.example.gametopupkh.supplier.repository;
+
+import java.util.UUID;
+
+import org.example.gametopupkh.supplier.entity.SupplierProduct;
+import org.springframework.data.jpa.repository.JpaRepository;
+
+public interface SupplierProductRepository extends JpaRepository<SupplierProduct, UUID> {
+
+    boolean existsBySupplierIdAndExternalSku(UUID supplierId, String externalSku);
+}

@@ -1,0 +1,23 @@
+package org.example.gametopupkh.supplier.service;
+
+import java.util.List;
+import java.util.UUID;
+
+import org.example.gametopupkh.supplier.dto.request.SupplierProductRequest;
+import org.example.gametopupkh.supplier.dto.request.SupplierRequest;
+import org.example.gametopupkh.supplier.dto.request.SupplierStatusRequest;
+import org.example.gametopupkh.supplier.dto.response.SupplierProductResponse;
+import org.example.gametopupkh.supplier.dto.response.SupplierResponse;
+
+public interface SupplierService {
+
+    List<SupplierResponse> findAll();
+
+    SupplierResponse create(SupplierRequest request);
+
+    SupplierResponse updateStatus(UUID id, SupplierStatusRequest request);
+
+    List<SupplierProductResponse> findAllProducts();
+
+    SupplierProductResponse createProduct(SupplierProductRequest request);
+}

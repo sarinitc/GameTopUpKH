@@ -51,6 +51,18 @@ public class Fulfillment {
     @Column(name = "last_error", length = 500)
     private String lastError;
 
+    @Column(name = "supplier_id")
+    private UUID supplierId;
+
+    @Column(name = "supplier_product_id")
+    private UUID supplierProductId;
+
+    @Column(name = "supplier_sku", length = 150)
+    private String supplierSku;
+
+    @Column(name = "supplier_adapter_key", length = 100)
+    private String supplierAdapterKey;
+
     @Column(name = "started_at")
     private Instant startedAt;
 

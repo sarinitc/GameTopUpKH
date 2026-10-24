@@ -1,0 +1,33 @@
+package org.example.gametopupkh.supplier.dto.response;
+
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.UUID;
+
+import org.example.gametopupkh.supplier.entity.SupplierProduct;
+
+public record SupplierProductResponse(
+        UUID id,
+        UUID supplierId,
+        UUID packageId,
+        String externalSku,
+        BigDecimal costPrice,
+        String currency,
+        boolean active,
+        Instant createdAt,
+        Instant updatedAt) {
+
+    public static SupplierProductResponse from(SupplierProduct supplierProduct) {
+        UUID supplierId = supplierProduct.getSupplier() == null ? null : supplierProduct.getSupplier().getId();
+        return new SupplierProductResponse(
+                supplierProduct.getId(),
+                supplierId,
+                supplierProduct.getPackageId(),
+                supplierProduct.getExternalSku(),
+                supplierProduct.getCostPrice(),
+                supplierProduct.getCurrency(),
+                supplierProduct.isActive(),
+                supplierProduct.getCreatedAt(),
+                supplierProduct.getUpdatedAt());
+    }
+}

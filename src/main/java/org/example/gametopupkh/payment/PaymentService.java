@@ -1,5 +1,6 @@
 package org.example.gametopupkh.payment;
 
+import java.util.List;
 import java.util.UUID;
 
 import org.example.gametopupkh.payment.dto.CreatePaymentResponse;
@@ -55,4 +56,16 @@ public interface PaymentService {
      * @param adminId   the authenticated staff member
      */
     PaymentStatusResponse reconcile(UUID paymentId, UUID adminId);
+
+    /**
+     * Re-reads a payment from the provider without an interactive staff member.
+     * This is the entry point used by scheduled reconciliation. It applies the same
+     * amount/currency verification, transactional state changes, audit events and
+     * after-commit fulfillment as the staff-triggered path.
+     *
+     * @param paymentId the unresolved payment to inspect
+     */
+    PaymentStatusResponse reconcileUnattended(UUID paymentId);
+
+    List<PaymentStatusResponse> findAll(PaymentStatus status);
 }

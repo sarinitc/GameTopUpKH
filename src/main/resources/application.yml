@@ -17,9 +17,22 @@ app:
 
 payment:
   gateway: mock
+  reconciliation:
+    enabled: ${PAYMENT_RECONCILIATION_ENABLED:true}
+    batch-size: ${PAYMENT_RECONCILIATION_BATCH_SIZE:50}
+    fixed-delay: ${PAYMENT_RECONCILIATION_FIXED_DELAY:PT1M}
+    initial-delay: ${PAYMENT_RECONCILIATION_INITIAL_DELAY:PT30S}
+    min-age: ${PAYMENT_RECONCILIATION_MIN_AGE:PT1M}
 
 supplier:
   client: ${SUPPLIER_CLIENT:mock}
   max-attempts: ${SUPPLIER_MAX_ATTEMPTS:3}
   mock:
     fail: ${SUPPLIER_MOCK_FAIL:false}
+
+fulfillment:
+  worker:
+    enabled: ${FULFILLMENT_WORKER_ENABLED:true}
+    batch-size: ${FULFILLMENT_WORKER_BATCH_SIZE:50}
+    fixed-delay: ${FULFILLMENT_WORKER_FIXED_DELAY:PT30S}
+    initial-delay: ${FULFILLMENT_WORKER_INITIAL_DELAY:PT30S}

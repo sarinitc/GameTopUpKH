@@ -4,9 +4,13 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 import jakarta.servlet.http.HttpServletResponse;
+import org.example.gametopupkh.audit.AdminAuditLogFilter;
+import org.example.gametopupkh.audit.service.AuditLogService;
 import org.example.gametopupkh.common.response.ApiResponse;
+import org.example.gametopupkh.identity.repository.UserRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -31,6 +35,7 @@ public class SecurityConfig {
             "/api/v1/games/**",
             "/api/v1/packages/**",
             "/api/v1/dev/payments/**",
+            "/api/v1/dev/fulfillments/**",
             "/api/v1/payments/aba/callback",
             "/api/v1/payments/mock/**",
             "/v3/api-docs",
@@ -49,9 +54,11 @@ public class SecurityConfig {
 
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
-            CustomUserDetailsService userDetailsService, ObjectMapper objectMapper) throws Exception {
+            CustomUserDetailsService userDetailsService, ObjectMapper objectMapper,
+            AuditLogService auditLogService, UserRepository userRepository) throws Exception {
         JwtAuthenticationFilter jwtAuthenticationFilter =
                 new JwtAuthenticationFilter(jwtService, userDetailsService, objectMapper);
+        AdminAuditLogFilter adminAuditLogFilter = new AdminAuditLogFilter(auditLogService, userRepository);
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -60,12 +67,21 @@ public class SecurityConfig {
                 .logout(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/admin/fulfillments/*/retry")
+                                .hasRole("ADMIN")
+                        .requestMatchers("/api/v1/admin/fulfillments/**")
+                                .hasAnyRole("ADMIN", "SUPPORT")
+                        .requestMatchers(HttpMethod.POST, "/api/v1/admin/payments/*/refunds")
+                                .hasRole("ADMIN")
+                        .requestMatchers(HttpMethod.GET, "/api/v1/admin/refunds", "/api/v1/admin/refunds/**")
+                                .hasAnyRole("ADMIN", "SUPPORT")
                         .requestMatchers(ADMIN_PATTERN).hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(authenticationEntryPoint(objectMapper))
                         .accessDeniedHandler(accessDeniedHandler(objectMapper)))
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterAfter(adminAuditLogFilter, JwtAuthenticationFilter.class)
                 .build();
     }
 

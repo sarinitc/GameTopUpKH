@@ -1,0 +1,61 @@
+﻿                payment.setExpiresAt(databasePrecision(intent.expiresAt())); 
+            } 
+ 
+            PaymentStatus target = intent.status(); 
+            if (target == PaymentStatus.COMPLETED) { 
+                target = applyCompletion(payment, intent, now); 
+            } else if (target == PaymentStatus.PENDING && payment.getStatus() == PaymentStatus.NEEDS_REVIEW) { 
+                target = PaymentStatus.NEEDS_REVIEW; 
+            } 
+ 
+            payment.setStatus(target); 
+            if (providerCheck) { 
+                payment.setLastProviderCheckAt(now); 
+            } 
+            Payment saved = paymentRepository.save(payment); 
+            recordEvent(saved.getId(), eventType, eventKey, 
+                    "Provider reported " + target.name(), actorUserId); 
+            return saved; 
+        }); 
+        fulfillCompletedPayment(applied); 
+        return applied; 
+    } 
+ 
+    private void fulfillCompletedPayment(Payment payment) { 
+        if (payment.getStatus() != PaymentStatus.COMPLETED) { 
+            return; 
+        } 
+        UUID orderId = payment.getOrderId(); 
+        if (TransactionSynchronizationManager.isActualTransactionActive() 
+                && TransactionSynchronizationManager.isSynchronizationActive()) { 
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() { 
+                @Override 
+                public void afterCommit() { 
+                    startFulfillment(orderId); 
+                } 
+            }); 
+            return; 
+        } 
+        startFulfillment(orderId); 
+    } 
+ 
+    private void startFulfillment(UUID orderId) { 
+        try { 
+            requiresNewTransaction.executeWithoutResult(status -> fulfillmentService.fulfillOrder(orderId)); 
+        } catch (RuntimeException e) { 
+            log.warn("Could not start fulfillment for order {}", orderId, e); 
+        } 
+    } 
+ 
+    private PaymentStatus applyCompletion(Payment payment, PaymentIntent intent, Instant now) { 
+        if (!matchesExpectedAmount(payment, intent)) { 
+            return PaymentStatus.NEEDS_REVIEW; 
+        } 
+        Order order = orderRepository.findById(payment.getOrderId()).orElse(null); 
+        if (order == null) { 
+            return PaymentStatus.NEEDS_REVIEW; 
+        } 
+        if (order.getStatus() == OrderStatus.PENDING_PAYMENT) { 
+            order.setStatus(OrderStatus.PAID); 
+            orderRepository.save(order); 
+            OrderStatusHistory history = new OrderStatusHistory();
