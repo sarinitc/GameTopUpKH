@@ -53,7 +53,6 @@ public class AdminAuditLogController {
         return ResponseEntity.ok(ApiResponse.ok(auditLogService.findAll(action, resolvedActorId,
                 resolvedActorEmail, entityType, entityId, from, to, page, size)));
     }
-
     @GetMapping("/{id}")
     public ResponseEntity<ApiResponse<AuditLogResponse>> findById(@PathVariable UUID id) {
         return ResponseEntity.ok(ApiResponse.ok(auditLogService.findById(id)));

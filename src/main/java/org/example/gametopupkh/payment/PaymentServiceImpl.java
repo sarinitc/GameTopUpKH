@@ -354,9 +354,51 @@ public class PaymentServiceImpl implements PaymentService {
                 return payment;
             }
 
-            if (intent.gatewayReference() != null && !intent.gatewayReference().isBlank()) {
-                payment.setGatewayReference(intent.gatewayReference());
+            String gatewayReference = intent.gatewayReference();
+            if (gatewayReference == null || gatewayReference.isBlank()) {
+                recordEvent(payment.getId(), eventType, eventKey, "Provider returned no gateway reference", actorUserId);
+                return payment;
             }
+            if (payment.getReference() != null && !payment.getReference().equals(gatewayReference)) {
+                recordEvent(payment.getId(), eventType, eventKey, "Provider gateway reference does not match the reserved payment reference", actorUserId);
+                if (payment.getStatus() != PaymentStatus.NEEDS_REVIEW) {
+                    payment.setStatus(PaymentStatus.NEEDS_REVIEW);
+                    paymentRepository.save(payment);
+                    Order order = orderRepository.findById(payment.getOrderId()).orElse(null);
+                    if (order != null && order.getStatus() != OrderStatus.NEEDS_REVIEW) {
+                        order.setStatus(OrderStatus.NEEDS_REVIEW);
+                        orderRepository.save(order);
+                        OrderStatusHistory history = new OrderStatusHistory();
+                        history.setOrderId(order.getId());
+                        history.setStatus(OrderStatus.NEEDS_REVIEW);
+                        history.setNote("Payment provider reference mismatch");
+                        orderStatusHistoryRepository.save(history);
+                    }
+                }
+                return payment;
+            }
+            if (payment.getGatewayReference() != null && !payment.getGatewayReference().equals(gatewayReference)) {
+                recordEvent(payment.getId(), eventType, eventKey, "Provider gateway reference does not match the stored payment reference", actorUserId);
+                if (payment.getStatus() != PaymentStatus.NEEDS_REVIEW) {
+                    payment.setStatus(PaymentStatus.NEEDS_REVIEW);
+                    paymentRepository.save(payment);
+                    Order order = orderRepository.findById(payment.getOrderId()).orElse(null);
+                    if (order != null && order.getStatus() != OrderStatus.NEEDS_REVIEW) {
+                        order.setStatus(OrderStatus.NEEDS_REVIEW);
+                        orderRepository.save(order);
+                        OrderStatusHistory history = new OrderStatusHistory();
+                        history.setOrderId(order.getId());
+                        history.setStatus(OrderStatus.NEEDS_REVIEW);
+                        history.setNote("Payment provider reference mismatch");
+                        orderStatusHistoryRepository.save(history);
+                    }
+                }
+                return payment;
+            }
+            if (payment.getGatewayReference() == null) {
+                payment.setGatewayReference(gatewayReference);
+            }
+
             if (intent.qrString() != null && !intent.qrString().isBlank()) {
                 payment.setQrString(intent.qrString());
             }
@@ -368,6 +410,28 @@ public class PaymentServiceImpl implements PaymentService {
             }
             if (intent.expiresAt() != null) {
                 payment.setExpiresAt(databasePrecision(intent.expiresAt()));
+            }
+
+            if (intent.amount() != null && intent.currency() != null) {
+                if (intent.amount().compareTo(payment.getAmount()) != 0
+                        || !payment.getCurrency().equalsIgnoreCase(intent.currency())) {
+                    recordEvent(payment.getId(), eventType, eventKey, "Provider amount/currency mismatch", actorUserId);
+                    if (payment.getStatus() != PaymentStatus.NEEDS_REVIEW) {
+                        payment.setStatus(PaymentStatus.NEEDS_REVIEW);
+                        paymentRepository.save(payment);
+                        Order order = orderRepository.findById(payment.getOrderId()).orElse(null);
+                        if (order != null && order.getStatus() != OrderStatus.NEEDS_REVIEW) {
+                            order.setStatus(OrderStatus.NEEDS_REVIEW);
+                            orderRepository.save(order);
+                            OrderStatusHistory history = new OrderStatusHistory();
+                            history.setOrderId(order.getId());
+                            history.setStatus(OrderStatus.NEEDS_REVIEW);
+                            history.setNote("Payment amount/currency mismatch");
+                            orderStatusHistoryRepository.save(history);
+                        }
+                    }
+                    return payment;
+                }
             }
 
             PaymentStatus target = intent.status();

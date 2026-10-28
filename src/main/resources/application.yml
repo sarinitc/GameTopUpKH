@@ -8,12 +8,65 @@ spring:
 server:
   port: 8082
 
+management:
+  endpoints:
+    access:
+      default: none
+      max-permitted: read-only
+    web:
+      exposure:
+        include: health,info,metrics
+    jmx:
+      exposure:
+        exclude: "*"
+  endpoint:
+    health:
+      access: read-only
+      show-details: when-authorized
+      show-components: when-authorized
+      roles: ADMIN
+      probes:
+        enabled: true
+      group:
+        readiness:
+          include: readinessState,db
+    info:
+      access: read-only
+    metrics:
+      access: read-only
+  info:
+    defaults:
+      enabled: false
+    env:
+      enabled: true
+  metrics:
+    tags:
+      application: ${spring.application.name}
+
+info:
+  app:
+    name: ${spring.application.name}
+    description: Cambodian game-credit storefront backend
+    version: "@project.version@"
+
 app:
   jwt:
     secret: ${JWT_SECRET}
     issuer: gametopup-api
     access-token-expiration: 15m
     refresh-token-expiration: 7d
+  password-reset:
+    token-expiration: ${PASSWORD_RESET_TOKEN_EXPIRATION:10m}
+    resend-cooldown: ${PASSWORD_RESET_RESEND_COOLDOWN:60s}
+    frontend-base-url: ${PASSWORD_RESET_FRONTEND_BASE_URL:http://localhost:3000}
+    reset-path: ${PASSWORD_RESET_PATH:/reset-password}
+    rate-limit-window: ${PASSWORD_RESET_RATE_LIMIT_WINDOW:15m}
+    requests-per-email-per-window: ${PASSWORD_RESET_REQUESTS_PER_EMAIL:3}
+    requests-per-ip-per-window: ${PASSWORD_RESET_REQUESTS_PER_IP:10}
+    reset-attempts-per-ip-per-window: ${PASSWORD_RESET_RESET_ATTEMPTS_PER_IP:10}
+    cleanup-enabled: ${PASSWORD_RESET_CLEANUP_ENABLED:true}
+    cleanup-interval: ${PASSWORD_RESET_CLEANUP_INTERVAL:PT1H}
+    cleanup-retention: ${PASSWORD_RESET_CLEANUP_RETENTION:P7D}
 
 payment:
   gateway: mock
@@ -27,6 +80,11 @@ payment:
 supplier:
   client: ${SUPPLIER_CLIENT:mock}
   max-attempts: ${SUPPLIER_MAX_ATTEMPTS:3}
+  bay2game:
+    enabled: ${BAY2GAME_ENABLED:false}
+    provider-confirmed: ${BAY2GAME_PROVIDER_CONFIRMED:false}
+    connect-timeout: ${BAY2GAME_CONNECT_TIMEOUT:3s}
+    read-timeout: ${BAY2GAME_READ_TIMEOUT:10s}
   mock:
     fail: ${SUPPLIER_MOCK_FAIL:false}
 

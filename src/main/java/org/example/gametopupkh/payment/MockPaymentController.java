@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import org.example.gametopupkh.common.response.ApiResponse;
 import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
  * registered while the mock gateway is active, so it is absent in ABA deployments.
  */
 @RestController
+@Profile("!production")
 @ConditionalOnProperty(name = "payment.gateway", havingValue = "mock", matchIfMissing = true)
 @Tag(name = "Mock payments", description = "Complete mock payments while payment.gateway=mock")
 public class MockPaymentController {

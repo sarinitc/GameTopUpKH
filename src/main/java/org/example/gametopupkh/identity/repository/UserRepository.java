@@ -28,6 +28,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findForVerificationByEmail(@Param("email") String email);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from User u where u.id = :id")
+    Optional<User> findByIdForUpdate(@Param("id") UUID id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from User u where u.phoneNumber = :phoneNumber")
     Optional<User> findForVerificationByPhoneNumber(@Param("phoneNumber") String phoneNumber);
 

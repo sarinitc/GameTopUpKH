@@ -180,6 +180,51 @@ class AbaPayWayOfficialApiTests {
         server.verify();
     }
 
+    @Test
+    void createNormalizesRawBase64QrImageWithoutCorruptingQrString() {
+        server.expect(requestTo(BASE_URL + AbaPayWayProperties.OFFICIAL_CREATE_PATH))
+                .andRespond(withSuccess("""
+                        {
+                          "status":{"code":"00","message":"Success"},
+                          "amount":10.50, "currency":"USD",
+                          "qrString":"00020101021229370016bakong@aba520458125303840540410.505802KH5912GameTopUp KH6010Phnom Penh6304ABCD",
+                          "qrImage":"iVBORw0KGgoAAAANSUhEUgAAAMgAAADIAQMAAACfor5yAAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAAA",
+                          "abapay_deeplink":"abaapp://pay",
+                          "expire_in":1772594519
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        PaymentIntent intent = gateway.createPayment(request());
+
+        assertThat(intent.qrString())
+                .isEqualTo("00020101021229370016bakong@aba520458125303840540410.505802KH5912GameTopUp KH6010Phnom Penh6304ABCD");
+        assertThat(intent.qrImageUrl())
+                .isEqualTo("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADIAQMAAACfor5yAAAABlBMVEX///8AAABVwtN+AAAACXBIWXMAAA7EAAAOxAGVKw4bAAAA");
+        assertThat(intent.status()).isEqualTo(PaymentStatus.PENDING);
+        server.verify();
+    }
+
+    @Test
+    void checkMapsDirectNumericStatusToCompleted() {
+        server.expect(requestTo(BASE_URL + AbaPayWayProperties.OFFICIAL_STATUS_PATH))
+                .andRespond(withSuccess("""
+                        {
+                          "status": 0,
+                          "description": "Approved",
+                          "amount": 10.50,
+                          "currency": "USD",
+                          "tran_id": "provider-direct"
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        PaymentIntent intent = gateway.checkStatus("provider-direct");
+
+        assertThat(intent.status()).isEqualTo(PaymentStatus.COMPLETED);
+        assertThat(intent.amount()).isEqualByComparingTo("10.50");
+        assertThat(intent.currency()).isEqualTo("USD");
+        server.verify();
+    }
+
     private PaymentRequest request() {
         return new PaymentRequest("order-1", new BigDecimal("10.50"), "USD", "player-1",
                 CALLBACK_URL, "Test order");

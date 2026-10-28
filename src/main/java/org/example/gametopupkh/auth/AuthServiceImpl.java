@@ -95,7 +95,8 @@ public class AuthServiceImpl implements AuthService {
     @Transactional
     public AuthResponse refresh(RefreshTokenRequest request) {
         Instant now = Instant.now();
-        RefreshToken stored = refreshTokenRepository.findByTokenHash(jwtService.hashRefreshToken(request.refreshToken()))
+        RefreshToken stored = refreshTokenRepository
+                .findByTokenHashForUpdate(jwtService.hashRefreshToken(request.refreshToken()))
                 .orElseThrow(() -> new ApiException(HttpStatus.UNAUTHORIZED, "INVALID_REFRESH_TOKEN",
                         "The refresh token is invalid"));
         if (stored.isRevoked()) {

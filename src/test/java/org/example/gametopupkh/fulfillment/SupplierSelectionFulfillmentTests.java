@@ -172,13 +172,9 @@ class SupplierSelectionFulfillmentTests {
 
     @Test
     void failedResultCommitLeavesDurableClaimAndNeverResubmits() {
-        doAnswer(invocation -> {
-            FulfillmentAttempt attempt = invocation.getArgument(0);
-            if (attempt.getStatus() == FulfillmentAttempt.Status.SUCCESS) {
-                throw new IllegalStateException("Simulated result storage failure");
-            }
-            return invocation.callRealMethod();
-        }).when(attempts).save(any());
+        doThrow(new IllegalStateException("Simulated result storage failure"))
+                .when(attempts).save(argThat(attempt ->
+                        attempt != null && attempt.getStatus() == FulfillmentAttempt.Status.SUCCESS));
         assertThatThrownBy(() -> service.fulfillOrder(order.getId()))
                 .isInstanceOf(IllegalStateException.class);
 

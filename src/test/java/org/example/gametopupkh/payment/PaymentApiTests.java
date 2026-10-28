@@ -1,14 +1,11 @@
 package org.example.gametopupkh.payment;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
 import com.jayway.jsonpath.JsonPath;
-import org.example.gametopupkh.catalog.game.entity.Game;
-import org.example.gametopupkh.catalog.game.repository.GameRepository;
-import org.example.gametopupkh.catalog.packagecatalog.entity.GamePackage;
-import org.example.gametopupkh.catalog.packagecatalog.repository.GamePackageRepository;
+import jakarta.persistence.EntityManager;
+import org.example.gametopupkh.supplier.SupplierTestFixtures;
 import org.example.gametopupkh.fulfillment.Fulfillment;
 import org.example.gametopupkh.fulfillment.FulfillmentRepository;
 import org.example.gametopupkh.fulfillment.FulfillmentStatus;
@@ -30,6 +27,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -76,10 +74,10 @@ class PaymentApiTests {
     private RoleRepository roleRepository;
 
     @Autowired
-    private GameRepository gameRepository;
+    private EntityManager entityManager;
 
     @Autowired
-    private GamePackageRepository gamePackageRepository;
+    private PlatformTransactionManager transactionManager;
 
     @Autowired
     private PasswordEncoder passwordEncoder;
@@ -271,26 +269,9 @@ class PaymentApiTests {
     }
 
     private UUID createOrder(UUID customerId) {
-        Game game = new Game();
-        game.setName("Payment Test Game");
-        game.setSlug("payment-test-" + UUID.randomUUID().toString().substring(0, 8));
-        game.setPlayerIdLabel("Player ID");
-        game.setRequiresZoneId(false);
-        game.setActive(true);
-        game = gameRepository.save(game);
-
-        GamePackage gamePackage = new GamePackage();
-        gamePackage.setGameId(game.getId());
-        gamePackage.setName("60 Diamonds");
-        gamePackage.setSku("PAY-" + UUID.randomUUID().toString().substring(0, 8).toUpperCase());
-        gamePackage.setDiamondAmount(60);
-        gamePackage.setPrice(new BigDecimal("9.99"));
-        gamePackage.setCurrency("USD");
-        gamePackage.setActive(true);
-        gamePackage = gamePackageRepository.save(gamePackage);
-
+        UUID packageId = SupplierTestFixtures.createEligibleProduct(entityManager, transactionManager).getPackageId();
         OrderResponse order = orderService.create(customerId,
-                new OrderRequest(gamePackage.getId(), "Player-1", null, null, null));
+                new OrderRequest(packageId, "Player-1", null, null, null));
         return order.id();
     }
 

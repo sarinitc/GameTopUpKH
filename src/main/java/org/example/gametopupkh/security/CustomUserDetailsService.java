@@ -35,10 +35,7 @@ public class CustomUserDetailsService implements UserDetailsService {
         if (user.getAccountStatus() != AccountStatus.ACTIVE) {
             throw new DisabledException("User " + username + " is not active");
         }
-        return new org.springframework.security.core.userdetails.User(
-                user.getId().toString(),
-                user.getPasswordHash(),
-                authoritiesOf(user));
+        return new AuthenticatedUser(user, authoritiesOf(user));
     }
 
     private List<GrantedAuthority> authoritiesOf(User user) {

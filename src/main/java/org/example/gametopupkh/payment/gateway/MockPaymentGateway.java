@@ -29,7 +29,9 @@ public class MockPaymentGateway implements PaymentGateway {
 
     @Override
     public PaymentIntent createPayment(PaymentRequest request) {
-        String reference = NAME + "_" + UUID.randomUUID().toString().replace("-", "");
+        String reference = request.transactionId() != null && !request.transactionId().isBlank()
+                ? request.transactionId()
+                : NAME + "_" + UUID.randomUUID().toString().replace("-", "");
         Instant createdAt = Instant.now();
         PaymentIntent intent = new PaymentIntent(
                 NAME,

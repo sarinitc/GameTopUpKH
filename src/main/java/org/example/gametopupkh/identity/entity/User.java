@@ -61,6 +61,9 @@ public class User {
     @Column(name = "phone_verified", nullable = false)
     private boolean phoneVerified;
 
+    @Column(name = "token_version", nullable = false)
+    private long tokenVersion;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

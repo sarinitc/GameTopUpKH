@@ -5,6 +5,8 @@ import java.time.Instant;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import jakarta.persistence.EntityManager;
+import org.example.gametopupkh.supplier.SupplierTestFixtures;
 import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.identity.entity.AccountStatus;
 import org.example.gametopupkh.identity.entity.Role;
@@ -27,6 +29,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -56,6 +59,8 @@ class PaymentServiceTests {
     @Autowired private OrderStatusHistoryRepository history;
     @Autowired private UserRepository users;
     @Autowired private RoleRepository roles;
+    @Autowired private EntityManager entityManager;
+    @Autowired private PlatformTransactionManager transactionManager;
     @MockitoBean private PaymentGateway gateway;
 
     private User customer;
@@ -69,7 +74,7 @@ class PaymentServiceTests {
         order = new Order();
         order.setOrderNumber("TEST-" + UUID.randomUUID());
         order.setUser(customer);
-        order.setPackageId(UUID.randomUUID());
+        order.setPackageId(SupplierTestFixtures.createEligibleProduct(entityManager, transactionManager).getPackageId());
         order.setPlayerId("player");
         order.setGameNameSnapshot("Game");
         order.setPackageNameSnapshot("Package");

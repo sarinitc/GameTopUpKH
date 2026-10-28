@@ -65,8 +65,22 @@ public class AbaPayWayPaymentMapper {
                 text(response, "redirect_url", "payment_url", "qr_url", "abapay_deeplink", "checkout_qr_url"),
                 Instant.now(),
                 text(response, "qrString", "qr_string", "qr_code", "qr", "qrCode"),
-                text(response, "qrImage", "qr_image", "qr_image_url", "qr_code_url"),
+                normalizeQrImage(text(response, "qrImage", "qr_image", "qr_image_url", "qr_code_url")),
                 instant(response, "expires_at", "expiry", "valid_until", "expire_in"));
+    }
+
+    private String normalizeQrImage(String qrImage) {
+        if (qrImage == null || qrImage.isBlank()) {
+            return null;
+        }
+        String trimmed = qrImage.trim();
+        if (trimmed.startsWith("/") || trimmed.contains("/payments/mock/")) {
+            return null;
+        }
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://") || trimmed.startsWith("data:image/")) {
+            return trimmed;
+        }
+        return "data:image/png;base64," + trimmed;
     }
 
     private void requireSuccessfulCall(JsonNode response) {
@@ -93,6 +107,10 @@ public class AbaPayWayPaymentMapper {
         if (statusCode != null) {
             return mapStatusCode(statusCode);
         }
+        Integer directStatus = integer(response, "status");
+        if (directStatus != null) {
+            return mapStatusCode(directStatus);
+        }
         return mapStatus(text(response, "status", "state"));
     }
 
@@ -112,11 +130,12 @@ public class AbaPayWayPaymentMapper {
             return PaymentStatus.PENDING;
         }
         return switch (status.toUpperCase()) {
-            case "APPROVED", "PRE-AUTH", "PAID", "COMPLETED", "SUCCESS" -> PaymentStatus.COMPLETED;
-            case "FAILED", "ERROR", "DECLINED" -> PaymentStatus.FAILED;
+            case "0", "00", "APPROVED", "PRE-AUTH", "PAID", "COMPLETED", "SUCCESS" -> PaymentStatus.COMPLETED;
+            case "2", "PENDING", "WAITING" -> PaymentStatus.PENDING;
+            case "3", "FAILED", "ERROR", "DECLINED" -> PaymentStatus.FAILED;
             case "EXPIRED" -> PaymentStatus.EXPIRED;
-            case "CANCELLED", "VOIDED" -> PaymentStatus.CANCELLED;
-            case "REFUNDED", "REVIEW", "NEEDS_REVIEW" -> PaymentStatus.NEEDS_REVIEW;
+            case "7", "CANCELLED", "VOIDED" -> PaymentStatus.CANCELLED;
+            case "4", "REFUNDED", "REVIEW", "NEEDS_REVIEW" -> PaymentStatus.NEEDS_REVIEW;
             default -> PaymentStatus.PENDING;
         };
     }

@@ -17,6 +17,73 @@ Backend REST API for the GameTopUp learning project.
 3. Run Spring Boot from the project root. The default dev profile loads .env automatically.
 4. Open http://localhost:8082. To override the local password, set POSTGRES_PASSWORD in the backend environment.
 
+## Monitoring
+
+Spring Boot Actuator uses the application's existing port (`8082` by default).
+Only `health`, `info`, and `metrics` are exposed, with read-only access; all other
+Actuator paths and write requests are denied.
+
+| GET endpoint | Access and behavior |
+| --- | --- |
+| `/actuator/health` | Public status summary; an `ADMIN` JWT also reveals components and details |
+| `/actuator/health/liveness` | Public status summary; independent of database availability |
+| `/actuator/health/readiness` | Public status summary; checks `readinessState` and database connectivity |
+| `/actuator/info` | `ADMIN` JWT required |
+| `/actuator/metrics`, `/actuator/metrics/{name}` | `ADMIN` JWT required |
+
+Health responses use Actuator's JSON format, for example `{"status":"UP"}`.
+Health group details are also restricted to `ADMIN`. Unhealthy checks return HTTP
+503. Probes should omit Authorization: an invalid bearer token returns HTTP 401
+even on public health endpoints. Info and metrics return 401 without authentication
+and 403 for authenticated users without `ADMIN`.
+
+```powershell
+curl.exe --fail http://localhost:8082/actuator/health
+curl.exe --fail http://localhost:8082/actuator/health/liveness
+curl.exe --fail http://localhost:8082/actuator/health/readiness
+```
+
+Use a valid admin access token in place of the placeholder in these HTTP requests:
+
+```http
+GET /actuator/info HTTP/1.1
+Host: localhost:8082
+Authorization: Bearer <ADMIN_ACCESS_TOKEN>
+
+###
+GET /actuator/metrics/jvm.memory.used HTTP/1.1
+Host: localhost:8082
+Authorization: Bearer <ADMIN_ACCESS_TOKEN>
+
+###
+GET /actuator/metrics/http.server.requests HTTP/1.1
+Host: localhost:8082
+Authorization: Bearer <ADMIN_ACCESS_TOKEN>
+```
+
+Info contains `app.name` (`GameTopUp-KH`), `app.description` (`Cambodian game-credit
+storefront backend`), and `app.version`, resolved from Maven's `@project.version@`
+during resource processing. Built-in metrics cover JVM memory and threads, CPU,
+process uptime, JDBC/Hikari connection pools, and HTTP request counts and latency.
+Metrics carry an `application` tag. HTTP request metrics appear after traffic;
+generate a request before inspecting `http.server.requests`.
+
+Metrics are held in memory and reset on restart. No persistence, dashboard, alerts,
+or external exporter are configured. Health checks do not verify ABA PayWay,
+suppliers, fulfillment progress, or business outcomes.
+
+After a production restart, confirm anonymous health/liveness/readiness requests
+return 200 with status only, admin info/metrics requests succeed, non-admin access
+to info/metrics is denied, and other Actuator paths remain inaccessible. Generate
+normal API traffic and confirm HTTP request measurements appear. Use the deployment's
+configured host, port, and HTTPS endpoint for these checks. Roll back by reverting
+the Actuator starter, monitoring configuration, and Actuator security matchers
+together, then rebuilding and restarting the previous application. No database
+migration or rollback is needed for monitoring.
+
+Configuration reference: [Spring Boot Actuator endpoints](https://docs.spring.io/spring-boot/reference/actuator/endpoints.html)
+and [built-in metrics](https://docs.spring.io/spring-boot/reference/actuator/metrics.html).
+
 ## Database schema
 
 The schema is owned by Flyway. `src/main/resources/db/migration/V1__init.sql` holds the

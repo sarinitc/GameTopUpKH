@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.example.gametopupkh.common.response.ApiResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.BadCredentialsException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -58,7 +59,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private void authenticate(String token, HttpServletRequest request) {
         UUID userId = jwtService.extractUserId(token);
+        long tokenVersion = jwtService.extractTokenVersion(token);
         UserDetails userDetails = userDetailsService.loadUserByUsername(userId.toString());
+        if (!(userDetails instanceof AuthenticatedUser authenticatedUser)
+                || authenticatedUser.getTokenVersion() != tokenVersion) {
+            throw new BadCredentialsException("The access token has been invalidated");
+        }
         UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
                 userDetails, null, userDetails.getAuthorities());
         authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

@@ -46,12 +46,12 @@ public record GamePackageRequest(
         @NotNull(message = "active is required", groups = Status.class)
         Boolean active) {
 
-    public interface Create {
+    public interface Create extends jakarta.validation.groups.Default {
     }
 
-    public interface Update {
+    public interface Update extends jakarta.validation.groups.Default {
     }
 
-    public interface Status {
+    public interface Status extends jakarta.validation.groups.Default {
     }
 }

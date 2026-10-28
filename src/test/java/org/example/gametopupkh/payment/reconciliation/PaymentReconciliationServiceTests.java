@@ -4,6 +4,8 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
+import jakarta.persistence.EntityManager;
+import org.example.gametopupkh.supplier.SupplierTestFixtures;
 import org.example.gametopupkh.fulfillment.Fulfillment;
 import org.example.gametopupkh.fulfillment.FulfillmentAttemptRepository;
 import org.example.gametopupkh.fulfillment.FulfillmentRepository;
@@ -30,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -60,6 +63,8 @@ class PaymentReconciliationServiceTests {
     @Autowired private FulfillmentAttemptRepository attempts;
     @Autowired private UserRepository users;
     @Autowired private RoleRepository roles;
+    @Autowired private EntityManager entityManager;
+    @Autowired private PlatformTransactionManager transactionManager;
     @MockitoBean private PaymentGateway gateway;
 
     private User customer;
@@ -218,7 +223,7 @@ class PaymentReconciliationServiceTests {
         Order order = new Order();
         order.setOrderNumber("REC-" + UUID.randomUUID());
         order.setUser(customer);
-        order.setPackageId(UUID.randomUUID());
+        order.setPackageId(SupplierTestFixtures.createEligibleProduct(entityManager, transactionManager).getPackageId());
         order.setPlayerId("player-1");
         order.setGameNameSnapshot("Game");
         order.setPackageNameSnapshot("Package");

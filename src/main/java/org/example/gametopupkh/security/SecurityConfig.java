@@ -8,6 +8,7 @@ import org.example.gametopupkh.audit.AdminAuditLogFilter;
 import org.example.gametopupkh.audit.service.AuditLogService;
 import org.example.gametopupkh.common.response.ApiResponse;
 import org.example.gametopupkh.identity.repository.UserRepository;
+import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -22,6 +23,7 @@ import org.springframework.security.web.AuthenticationEntryPoint;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.access.AccessDeniedHandler;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import org.springframework.security.web.util.matcher.AndRequestMatcher;
 import tools.jackson.databind.ObjectMapper;
 
 @Configuration
@@ -66,6 +68,16 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(requests -> requests
+                        .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
+                                "/actuator/health/readiness").permitAll()
+                        .requestMatchers(new AndRequestMatcher(
+                                request -> HttpMethod.GET.matches(request.getMethod()),
+                                EndpointRequest.to("health", "info", "metrics")))
+                                .hasRole("ADMIN")
+                        .requestMatchers(EndpointRequest.toAnyEndpoint()).denyAll()
+                        .requestMatchers("/actuator", "/actuator/**").denyAll()
+                        .requestMatchers(HttpMethod.POST, "/api/v1/games/*/player/verify")
+                                .authenticated()
                         .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
                         .requestMatchers(HttpMethod.POST, "/api/v1/admin/fulfillments/*/retry")
                                 .hasRole("ADMIN")

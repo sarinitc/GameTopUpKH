@@ -14,5 +14,6 @@ public enum AuditAction {
     RECONCILE,
     REFUND,
     LOGIN,
-    LOGOUT;
+    LOGOUT,
+    PASSWORD_RESET;
 }

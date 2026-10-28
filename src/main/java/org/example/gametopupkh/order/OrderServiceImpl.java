@@ -20,6 +20,8 @@ import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.identity.entity.AccountStatus;
 import org.example.gametopupkh.identity.entity.User;
 import org.example.gametopupkh.identity.repository.UserRepository;
+import org.example.gametopupkh.player.PlayerAccountValidator;
+import org.example.gametopupkh.player.dto.PlayerVerifyRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -66,12 +68,21 @@ public class OrderServiceImpl implements OrderService {
         }
 
         String zoneId = normalize(request.zoneId());
-        if (game.isRequiresZoneId() && zoneId == null) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "ZONE_ID_REQUIRED",
-                    "The game " + game.getName() + " requires a zone id");
-        }
-        if (!game.isRequiresZoneId()) {
-            zoneId = null;
+        if (PlayerAccountValidator.supportsGame(game.getSlug())) {
+            // The game's identifier contract takes precedence over editable catalog flags.
+            // Free Fire has no zone; retain the existing order behavior of dropping it.
+            PlayerVerifyRequest normalized = PlayerAccountValidator.normalizeAndValidate(game.getSlug(),
+                    new PlayerVerifyRequest(playerId, "free-fire".equals(game.getSlug()) ? null : zoneId));
+            playerId = normalized.playerId();
+            zoneId = normalized.zoneId();
+        } else {
+            if (game.isRequiresZoneId() && zoneId == null) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "ZONE_ID_REQUIRED",
+                        "The game " + game.getName() + " requires a zone id");
+            }
+            if (!game.isRequiresZoneId()) {
+                zoneId = null;
+            }
         }
 
         int quantity = 1;

@@ -33,6 +33,7 @@ public class JwtService {
 
     private static final String CLAIM_EMAIL = "email";
     private static final String CLAIM_ROLES = "roles";
+    private static final String CLAIM_TOKEN_VERSION = "ver";
 
     private final SecretKey signingKey;
     private final String issuer;
@@ -61,6 +62,7 @@ public class JwtService {
                 .subject(user.getId().toString())
                 .claim(CLAIM_EMAIL, user.getEmail())
                 .claim(CLAIM_ROLES, List.copyOf(user.getRoleNames()))
+                .claim(CLAIM_TOKEN_VERSION, user.getTokenVersion())
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plus(accessTokenExpiration)))
                 .id(UUID.randomUUID().toString())
@@ -75,6 +77,16 @@ public class JwtService {
     public UUID extractUserId(String token) {
         Claims claims = parseClaims(token);
         return UUID.fromString(claims.getSubject());
+    }
+
+    /**
+     * @return the token version the access token was issued with; tokens issued before
+     *         versioning was introduced are treated as version {@code 0}
+     * @throws JwtException when the token is malformed, tampered with or expired
+     */
+    public long extractTokenVersion(String token) {
+        Object value = parseClaims(token).get(CLAIM_TOKEN_VERSION);
+        return value instanceof Number number ? number.longValue() : 0L;
     }
 
     /**

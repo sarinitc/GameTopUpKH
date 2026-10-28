@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.example.gametopupkh.common.response.ApiResponse;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -16,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
  * only registered while the mock supplier is active.
  */
 @RestController
+@Profile("!production")
 @ConditionalOnProperty(name = "supplier.client", havingValue = "mock", matchIfMissing = true)
 @Tag(name = "Mock fulfillment", description = "Process orders while supplier.client=mock")
 public class DevFulfillmentController {
