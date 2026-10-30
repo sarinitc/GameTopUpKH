@@ -18,7 +18,8 @@ import org.springframework.web.bind.annotation.RestController;
  * registered while the mock gateway is active, so it is absent in ABA deployments.
  */
 @RestController
-@Profile("!production")
+@Profile("!prod & !production")
+@ConditionalOnProperty(name = "app.dev-tools.enabled", havingValue = "true")
 @ConditionalOnProperty(name = "payment.gateway", havingValue = "mock", matchIfMissing = true)
 @Tag(name = "Mock payments", description = "Complete mock payments while payment.gateway=mock")
 public class MockPaymentController {

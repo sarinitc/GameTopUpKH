@@ -152,7 +152,7 @@ class PaymentReconciliationServiceTests {
         assertThat(payments.findById(payment.getId()).orElseThrow().getStatus())
                 .isEqualTo(PaymentStatus.NEEDS_REVIEW);
         assertThat(orders.findById(order.getId()).orElseThrow().getStatus())
-                .isEqualTo(OrderStatus.PENDING_PAYMENT);
+                .isEqualTo(OrderStatus.NEEDS_REVIEW);
         assertThat(fulfillments.findByOrderId(order.getId())).isEmpty();
     }
 

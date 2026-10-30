@@ -17,7 +17,8 @@ import org.springframework.web.bind.annotation.RestController;
  * only registered while the mock supplier is active.
  */
 @RestController
-@Profile("!production")
+@Profile("!prod & !production")
+@ConditionalOnProperty(name = "app.dev-tools.enabled", havingValue = "true")
 @ConditionalOnProperty(name = "supplier.client", havingValue = "mock", matchIfMissing = true)
 @Tag(name = "Mock fulfillment", description = "Process orders while supplier.client=mock")
 public class DevFulfillmentController {

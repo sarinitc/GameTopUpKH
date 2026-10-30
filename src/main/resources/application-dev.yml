@@ -1,3 +1,7 @@
+app:
+  dev-tools:
+    enabled: ${APP_DEV_TOOLS_ENABLED:true}
+
 spring:
   config:
     import: "optional:file:./.env[.properties]"
@@ -16,6 +20,8 @@ spring:
 payment:
   gateway: ${PAYMENT_GATEWAY:mock}
   aba:
+    environment: ${ABA_PAYWAY_ENVIRONMENT:sandbox}
+    live-payments-enabled: ${ABA_PAYWAY_LIVE_PAYMENTS_ENABLED:false}
     base-url: ${ABA_PAYWAY_BASE_URL:https://checkout-sandbox.payway.com.kh}
     merchant-id: ${ABA_PAYWAY_MERCHANT_ID:}
     api-key: ${ABA_PAYWAY_API_KEY:}
@@ -27,5 +33,8 @@ payment:
     lifetime-minutes: ${ABA_PAYWAY_LIFETIME_MINUTES:30}
     callback-url: ${ABA_PAYWAY_CALLBACK_URL:http://localhost:8082/api/v1/payments/aba/callback}
     callback-secret: ${ABA_PAYWAY_CALLBACK_SECRET:}
+    connect-timeout: ${ABA_PAYWAY_CONNECT_TIMEOUT:5s}
+    read-timeout: ${ABA_PAYWAY_READ_TIMEOUT:15s}
+    max-retries: ${ABA_PAYWAY_MAX_RETRIES:2}
   reconcile:
     cooldown: ${PAYMENT_RECONCILE_COOLDOWN:PT30S}

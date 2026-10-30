@@ -67,5 +67,36 @@ public interface PaymentService {
      */
     PaymentStatusResponse reconcileUnattended(UUID paymentId);
 
+    /**
+     * Authoritatively verifies an unresolved payment with the provider.
+     * Validates provider confirmation, expected merchant, transaction reference,
+     * amount and currency, atomically transitions payment and order status,
+     * records audit events, and triggers automated fulfillment once.
+     *
+     * @param paymentId the payment to verify
+     * @return the authoritative payment status response
+     */
+    PaymentStatusResponse verifyPayment(UUID paymentId);
+
+    /**
+     * Authenticated customer or staff entry point to verify a payment with the provider.
+     *
+     * @param paymentId the payment to verify
+     * @param requesterId the authenticated caller
+     * @param admin whether the caller is staff
+     * @return the authoritative payment status response
+     */
+    PaymentStatusResponse verifyPaymentForUser(UUID paymentId, UUID requesterId, boolean admin);
+
+    /**
+     * Retrieves the payment initialization response for an order.
+     *
+     * @param orderId the order ID
+     * @param requesterId the authenticated caller
+     * @param admin whether the caller is staff
+     * @return the payment information including QR
+     */
+    CreatePaymentResponse getPaymentByOrder(UUID orderId, UUID requesterId, boolean admin);
+
     List<PaymentStatusResponse> findAll(PaymentStatus status);
 }

@@ -248,8 +248,39 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public PaymentStatusResponse reconcileUnattended(UUID paymentId) {
+        return verifyPayment(paymentId);
+    }
+
+    @Override
+    public PaymentStatusResponse verifyPayment(UUID paymentId) {
         return reconcileInternal(paymentId, null,
                 EVENT_RECONCILIATION, EVENT_RECONCILIATION_SKIPPED, EVENT_RECONCILIATION_ERROR);
+    }
+
+    @Override
+    public PaymentStatusResponse verifyPaymentForUser(UUID paymentId, UUID requesterId, boolean admin) {
+        Payment payment = requirePayment(paymentId);
+        if (!admin) {
+            Order order = orderRepository.findWithUserById(payment.getOrderId())
+                    .orElseThrow(() -> paymentNotFound(paymentId));
+            if (order.getUser() == null || !order.getUser().getId().equals(requesterId)) {
+                throw paymentNotFound(paymentId);
+            }
+        }
+        return verifyPayment(paymentId);
+    }
+
+    @Override
+    public CreatePaymentResponse getPaymentByOrder(UUID orderId, UUID requesterId, boolean admin) {
+        Order order = orderRepository.findWithUserById(orderId)
+                .orElseThrow(() -> orderNotFound(orderId));
+        if (!admin && (order.getUser() == null || !order.getUser().getId().equals(requesterId))) {
+            throw orderNotFound(orderId);
+        }
+        Payment payment = paymentRepository.findByOrderId(orderId)
+                .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "PAYMENT_NOT_FOUND",
+                        "No payment found for order " + orderId));
+        return CreatePaymentResponse.from(payment);
     }
 
     private PaymentStatusResponse reconcileInternal(UUID paymentId, UUID actorUserId,
@@ -437,8 +468,22 @@ public class PaymentServiceImpl implements PaymentService {
             PaymentStatus target = intent.status();
             if (target == PaymentStatus.COMPLETED) {
                 target = applyCompletion(payment, intent, now);
-            } else if (target == PaymentStatus.PENDING && payment.getStatus() == PaymentStatus.NEEDS_REVIEW) {
-                target = PaymentStatus.NEEDS_REVIEW;
+            } else if (target == PaymentStatus.PENDING) {
+                if (payment.getExpiresAt() != null && payment.getExpiresAt().isBefore(now)) {
+                    target = PaymentStatus.EXPIRED;
+                    Order order = orderRepository.findById(payment.getOrderId()).orElse(null);
+                    if (order != null && order.getStatus() == OrderStatus.PENDING_PAYMENT) {
+                        order.setStatus(OrderStatus.CANCELLED);
+                        orderRepository.save(order);
+                        OrderStatusHistory history = new OrderStatusHistory();
+                        history.setOrderId(order.getId());
+                        history.setStatus(OrderStatus.CANCELLED);
+                        history.setNote("Payment expired without provider confirmation");
+                        orderStatusHistoryRepository.save(history);
+                    }
+                } else if (payment.getStatus() == PaymentStatus.NEEDS_REVIEW) {
+                    target = PaymentStatus.NEEDS_REVIEW;
+                }
             }
 
             payment.setStatus(target);

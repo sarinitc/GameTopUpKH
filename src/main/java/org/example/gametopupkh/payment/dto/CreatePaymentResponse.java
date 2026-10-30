@@ -27,6 +27,10 @@ public record CreatePaymentResponse(
         Instant expiresAt,
         Instant createdAt) {
 
+    public String qrImage() {
+        return qrImageUrl;
+    }
+
     public static CreatePaymentResponse from(Payment payment) {
         return new CreatePaymentResponse(
                 payment.getId(),

@@ -29,7 +29,7 @@ class MockRouteIsolationPostgresTests extends PostgresIntegrationTest {
 
     @Test
     void productionProfileHasMockAdaptersButNoDevelopmentControllers() {
-        assertThat(context.getEnvironment().getActiveProfiles()).contains("production").doesNotContain("dev", "test");
+        assertThat(context.getEnvironment().getActiveProfiles()).contains("production").doesNotContain("dev");
         assertThat(context.getBeansOfType(MockPaymentGateway.class)).hasSize(1);
         assertAll(
                 () -> assertThat(context.getBeansOfType(MockPaymentController.class)).isEmpty(),

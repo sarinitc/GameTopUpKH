@@ -10,7 +10,7 @@ class PostgresSchemaTests extends PostgresIntegrationTest {
     @Test
     void allFlywayMigrationsApplyAndPostgresConstraintsAreEnforced() {
         assertThat(jdbc.queryForObject("select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(11);
+                .isEqualTo(12);
         assertThat(jdbc.queryForList("select name from roles order by name", String.class))
                 .containsExactly("ADMIN", "SUPPORT", "USER");
         assertThatThrownBy(() -> jdbc.update("""

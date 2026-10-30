@@ -28,6 +28,10 @@ public record PaymentStatusResponse(
         Instant createdAt,
         Instant updatedAt) {
 
+    public String qrImage() {
+        return qrImageUrl;
+    }
+
     public static PaymentStatusResponse from(Payment payment) {
         return new PaymentStatusResponse(
                 payment.getId(),

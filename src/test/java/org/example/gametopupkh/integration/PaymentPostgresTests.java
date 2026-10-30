@@ -146,7 +146,7 @@ class PaymentPostgresTests extends PostgresIntegrationTest {
 
         callback(payment, "invalid-confirmation");
 
-        assertState(payment, "NEEDS_REVIEW", "PENDING_PAYMENT");
+        assertState(payment, "NEEDS_REVIEW", expectedOrderStatus(invalid));
         assertNoDelivery(payment);
         assertThat(jdbc.queryForObject("select gateway_reference from payments where id = ?", String.class,
                 payment.id())).isEqualTo(payment.reference());
@@ -163,10 +163,16 @@ class PaymentPostgresTests extends PostgresIntegrationTest {
                         .header(HttpHeaders.AUTHORIZATION, "Bearer " + token("ADMIN")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("NEEDS_REVIEW"));
 
-        assertState(payment, "NEEDS_REVIEW", "PENDING_PAYMENT");
+        assertState(payment, "NEEDS_REVIEW", expectedOrderStatus(invalid));
         assertNoDelivery(payment);
         assertThat(jdbc.queryForObject("select gateway_reference from payments where id = ?", String.class,
                 payment.id())).isEqualTo(payment.reference());
+    }
+
+    private String expectedOrderStatus(InvalidConfirmation invalid) {
+        return invalid == InvalidConfirmation.MISSING_AMOUNT || invalid == InvalidConfirmation.MISSING_CURRENCY
+                ? "PENDING_PAYMENT"
+                : "NEEDS_REVIEW";
     }
 
     @Test

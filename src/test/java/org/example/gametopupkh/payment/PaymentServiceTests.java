@@ -16,6 +16,7 @@ import org.example.gametopupkh.identity.repository.UserRepository;
 import org.example.gametopupkh.order.Order;
 import org.example.gametopupkh.order.OrderRepository;
 import org.example.gametopupkh.order.OrderStatus;
+import org.example.gametopupkh.order.OrderStatusHistory;
 import org.example.gametopupkh.order.OrderStatusHistoryRepository;
 import org.example.gametopupkh.payment.dto.CreatePaymentResponse;
 import org.example.gametopupkh.payment.gateway.PaymentGateway;
@@ -153,8 +154,10 @@ class PaymentServiceTests {
         CreatePaymentResponse payment = create();
         when(gateway.checkStatus(payment.reference())).thenReturn(intent(payment.reference(), PaymentStatus.COMPLETED, new BigDecimal("0.01")));
         assertThat(service.reconcile(payment.paymentId(), admin.getId()).status()).isEqualTo(PaymentStatus.NEEDS_REVIEW);
-        assertThat(orders.findById(order.getId()).orElseThrow().getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
-        assertThat(history.findAllByOrderIdOrderByChangedAtAsc(order.getId())).isEmpty();
+        assertThat(orders.findById(order.getId()).orElseThrow().getStatus()).isEqualTo(OrderStatus.NEEDS_REVIEW);
+        assertThat(history.findAllByOrderIdOrderByChangedAtAsc(order.getId()))
+                .extracting(OrderStatusHistory::getStatus)
+                .containsExactly(OrderStatus.NEEDS_REVIEW);
     }
 
     @Test

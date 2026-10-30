@@ -197,7 +197,7 @@ class PaymentFulfillmentTests {
         service.processCallback(payment.reference(), "mismatch");
 
         assertThat(storedPayment(payment).getStatus()).isEqualTo(PaymentStatus.NEEDS_REVIEW);
-        assertThat(storedOrder().getStatus()).isEqualTo(OrderStatus.PENDING_PAYMENT);
+        assertThat(storedOrder().getStatus()).isEqualTo(OrderStatus.NEEDS_REVIEW);
         assertThat(fulfillments.findByOrderId(order.getId())).isEmpty();
         verify(supplier, never()).fulfill(any());
     }

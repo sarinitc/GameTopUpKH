@@ -39,11 +39,29 @@ public class PaymentController {
         return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(payment));
     }
 
+    @GetMapping("/api/v1/orders/{orderId}/payments/aba")
+    public ResponseEntity<ApiResponse<CreatePaymentResponse>> getAbaPaymentByOrder(
+            @PathVariable UUID orderId,
+            @AuthenticationPrincipal UserDetails principal) {
+        CreatePaymentResponse payment = paymentService.getPaymentByOrder(
+                orderId, currentUserId(principal), isAdmin(principal));
+        return ResponseEntity.ok(ApiResponse.ok(payment));
+    }
+
     @GetMapping("/api/v1/payments/{paymentId}")
     public ResponseEntity<ApiResponse<PaymentStatusResponse>> getPayment(
             @PathVariable UUID paymentId,
             @AuthenticationPrincipal UserDetails principal) {
         PaymentStatusResponse payment = paymentService.getPayment(
+                paymentId, currentUserId(principal), isAdmin(principal));
+        return ResponseEntity.ok(ApiResponse.ok(payment));
+    }
+
+    @PostMapping("/api/v1/payments/{paymentId}/verify")
+    public ResponseEntity<ApiResponse<PaymentStatusResponse>> verifyPayment(
+            @PathVariable UUID paymentId,
+            @AuthenticationPrincipal UserDetails principal) {
+        PaymentStatusResponse payment = paymentService.verifyPaymentForUser(
                 paymentId, currentUserId(principal), isAdmin(principal));
         return ResponseEntity.ok(ApiResponse.ok(payment));
     }
