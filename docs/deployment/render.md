@@ -15,15 +15,59 @@ no server administration, TLS is handled by Render.
 | Piece | Setting |
 | --- | --- |
 | Runtime | Docker (`./Dockerfile`, multi-stage Maven → JRE 17) |
-| Port | Render injects `PORT`; `application-prod.yml` binds `server.port: ${PORT:${SERVER_PORT:8082}}` |
+| Port | Render injects `PORT`; the app binds `${PORT:${SERVER_PORT:8082}}` |
 | Health check | `/actuator/health/readiness` (200 with `status: UP` only when the DB answers) |
-| Profiles | `SPRING_PROFILES_ACTIVE=prod` |
+| Profiles | Image default `ENV SPRING_PROFILES_ACTIVE=prod`, overridable from the dashboard |
 | Schema | Flyway runs `V1`–`V12` on the first boot, then Hibernate validates only |
 | Database | External Neon PostgreSQL (`sslmode=require`), no Render disk |
 | Start command | Image `ENTRYPOINT` (`java -jar /app/application.jar`); do not override |
 
 `render.yaml` at the repository root is an optional Blueprint. A manual
 **New → Web Service** with runtime **Docker** is equivalent.
+
+## Deploy on Render + Neon (quick start)
+
+1. **Neon:** create a project, then copy the **direct** host (the one *without*
+   `-pooler`) — Flyway's migration lock does not survive transaction pooling.
+   Build the JDBC URL as
+   `jdbc:postgresql://<neon-host>/neondb?sslmode=require` and keep the user and
+   password as separate values. If the password was ever pasted into a chat, a
+   ticket or a public repo, reset it in the Neon console first.
+2. **Render:** **New → Web Service** → connect the repo → runtime **Docker** →
+   Dockerfile `./Dockerfile` → health check path `/actuator/health/readiness`.
+   Leave the start command empty; the image already defaults to
+   `SPRING_PROFILES_ACTIVE=prod` and binds Render's injected `PORT`.
+3. **Env vars:** set the block below in the Render dashboard and deploy.
+4. **Frontend:** point the Vercel API base URL at the Render host, then make
+   `APP_CORS_ALLOWED_ORIGINS` match the Vercel origin exactly (https, no path,
+   no trailing slash). Changing any env var restarts the service.
+5. **Verify:** `curl.exe --fail https://<service>.onrender.com/actuator/health`
+   must return `{"groups":["liveness","readiness"],"status":"UP"}`, and the
+   readiness path (the Render health check) must report `UP` after Flyway
+   finishes `V1`–`V12` on the first boot.
+
+```properties
+SPRING_PROFILES_ACTIVE=prod
+SPRING_DATASOURCE_URL=jdbc:postgresql://<neon-host>/neondb?sslmode=require
+SPRING_DATASOURCE_USERNAME=<neon-user>
+SPRING_DATASOURCE_PASSWORD=<NEON_PASSWORD>
+JWT_SECRET=<64-plus-random-characters>
+APP_CORS_ALLOWED_ORIGINS=https://your-app.vercel.app
+APP_PASSWORD_RESET_FRONTEND_BASE_URL=https://your-app.vercel.app
+DB_POOL_SIZE=5
+DB_POOL_MIN_IDLE=2
+```
+
+Do **not** set `PORT`: Render injects it. Do **not** copy the API key or gateway
+values from the local `.env`; Render runs mock commerce
+(`PAYMENT_GATEWAY=mock`, `SUPPLIER_CLIENT=mock`).
+
+> **Free tier sleeps.** The free instance suspends after ~15 minutes idle, so the
+> next request can take about 50 seconds. The data lives in Neon and is not
+> affected; mention the cold start to anyone you share the link with.
+
+The sections below explain each step, the Blueprint file, CORS preflight checks
+and troubleshooting.
 
 ## 1. Create the Neon database
 

@@ -27,7 +27,11 @@ COPY --from=build --chown=10001:10001 /workspace/application.jar /app/applicatio
 USER 10001:10001
 EXPOSE 8082
 
-ENV JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" \
+# The image runs the production profile by default, so a platform that does not
+# set a profile can never boot into `dev` (which enables mock mutation routes).
+# Any explicit SPRING_PROFILES_ACTIVE passed by the platform still wins.
+ENV SPRING_PROFILES_ACTIVE=prod \
+    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" \
     TZ=UTC
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
