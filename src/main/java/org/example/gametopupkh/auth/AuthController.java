@@ -61,7 +61,6 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(
                 new MessageResponse(PasswordResetServiceImpl.FORGOT_PASSWORD_MESSAGE)));
     }
-
     @Operation(summary = "Reset a password with a single-use token",
             description = "Consumes the emailed token, revokes refresh tokens and invalidates existing access tokens.")
     @PostMapping("/reset-password")
