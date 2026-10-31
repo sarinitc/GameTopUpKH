@@ -1,0 +1,22 @@
+# Never send local configuration or secrets to the Docker build context.
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Build output and IDE/tooling state
+target/
+.git/
+.idea/
+.vscode/
+*.iml
+
+# Documentation, local logs and scratch files
+docs/
+*.md
+*.log
+temp.txt
+
+# Local Docker/OS artifacts
+.DS_Store
+Thumbs.db

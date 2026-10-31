@@ -1,0 +1,100 @@
+# Production profile. Activated with SPRING_PROFILES_ACTIVE=prod (never "dev,prod").
+#
+# Every value that matters in production comes from the environment; nothing
+# secret is written here. The base application.yml still supplies defaults for
+# integrations that stay disabled at launch.
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  datasource:
+    # No localhost fallback: a missing datasource URL must fail startup, not
+    # silently connect to a developer database.
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      minimum-idle: ${DB_POOL_MIN_IDLE:2}
+      # Hikari timeouts are plain milliseconds, not durations.
+      connection-timeout: 10000
+      validation-timeout: 5000
+
+  jpa:
+    hibernate:
+      # The schema is owned by Flyway. Startup validates entity mappings against
+      # the migrated schema and never alters it.
+      ddl-auto: validate
+    open-in-view: false
+    show-sql: false
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true
+    clean-disabled: true
+    validate-on-migrate: true
+    baseline-on-migrate: false
+
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: ${SERVER_PORT:8082}
+  # Finish in-flight requests on SIGTERM instead of dropping them.
+  shutdown: graceful
+  # Trust X-Forwarded-* from the TLS reverse proxy so audit logs and rate limits
+  # see the real client address.
+  forward-headers-strategy: framework
+  error:
+    include-message: never
+    include-stacktrace: never
+    include-binding-errors: never
+
+app:
+  dev-tools:
+    # Mock payment confirmation and mock delivery routes must never exist in
+    # production, even if an environment variable is set incorrectly.
+    enabled: false
+  password-reset:
+    frontend-base-url: ${APP_PASSWORD_RESET_FRONTEND_BASE_URL}
+
+payment:
+  gateway: ${PAYMENT_GATEWAY:mock}
+  aba:
+    environment: ${ABA_PAYWAY_ENVIRONMENT:sandbox}
+    live-payments-enabled: false
+  reconciliation:
+    # Scheduled provider polling is disabled until a live gateway is approved.
+    enabled: ${PAYMENT_RECONCILIATION_ENABLED:false}
+
+supplier:
+  client: ${SUPPLIER_CLIENT:mock}
+
+fulfillment:
+  worker:
+    # Automatic redelivery scans are off; a crash between PAID and delivery needs
+    # a manual, audited retry while delivery is still simulated.
+    enabled: ${FULFILLMENT_WORKER_ENABLED:false}
+
+player:
+  verification:
+    # No authorized supplier lookup contract exists, so lookups report
+    # UNAVAILABLE instead of trusting fixture data.
+    mock-enabled: false
+
+springdoc:
+  swagger-ui:
+    enabled: false
+    path: /swagger-ui.html
+  api-docs:
+    enabled: false
+
+logging:
+  level:
+    root: INFO
+    org.hibernate.SQL: WARN
+    org.flywaydb: INFO

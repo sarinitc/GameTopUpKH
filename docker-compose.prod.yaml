@@ -1,0 +1,100 @@
+# Production Compose file for GameTopUp KH.
+#
+# Usage (from the project root):
+#   docker compose --env-file .env.production -f docker-compose.prod.yaml up -d --build
+#
+# This file is independent of the development docker-compose.yaml, which starts only
+# a local PostgreSQL. Never run both against the same data directory.
+#
+# Secrets are never baked into this file: every required value uses the
+# ${VAR:?message} form, so Compose refuses to start (and prints only the message,
+# never the value) when something is missing.
+name: gametopup-prod
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: gametopup-prod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      TZ: UTC
+    # Deliberately no "ports": the database is reachable only on the internal
+    # Compose network. Use "docker compose exec postgres psql" for admin access.
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  app:
+    image: gametopup-kh:${APP_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gametopup-prod-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8082"
+      TZ: UTC
+
+      # Database (compose service hostname, not localhost)
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:?POSTGRES_USER is required}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+
+      # Application secrets
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      APP_PASSWORD_RESET_FRONTEND_BASE_URL: ${APP_PASSWORD_RESET_FRONTEND_BASE_URL:?APP_PASSWORD_RESET_FRONTEND_BASE_URL is required}
+
+      # Commerce safety rails: development routes stay off, live payments and
+      # automatic fulfillment stay off until real provider contracts exist.
+      APP_DEV_TOOLS_ENABLED: "false"
+      PAYMENT_GATEWAY: ${PAYMENT_GATEWAY:-mock}
+      ABA_PAYWAY_ENVIRONMENT: ${ABA_PAYWAY_ENVIRONMENT:-sandbox}
+      ABA_PAYWAY_LIVE_PAYMENTS_ENABLED: "false"
+      ABA_PAYWAY_MERCHANT_ID: ${ABA_PAYWAY_MERCHANT_ID:-}
+      ABA_PAYWAY_API_KEY: ${ABA_PAYWAY_API_KEY:-}
+      ABA_PAYWAY_CALLBACK_URL: ${ABA_PAYWAY_CALLBACK_URL:-}
+      ABA_PAYWAY_CALLBACK_SECRET: ${ABA_PAYWAY_CALLBACK_SECRET:-}
+      SUPPLIER_CLIENT: ${SUPPLIER_CLIENT:-mock}
+      FULFILLMENT_WORKER_ENABLED: ${FULFILLMENT_WORKER_ENABLED:-false}
+      PAYMENT_RECONCILIATION_ENABLED: ${PAYMENT_RECONCILIATION_ENABLED:-false}
+
+      # Browser access is not configurable yet (see docs; CORS work is pending).
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-}
+    # Publish the API on the loopback interface only; a TLS reverse proxy on the
+    # host is the sole public entry point.
+    ports:
+      - "127.0.0.1:${APP_HOST_PORT:-8082}:8082"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 45s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  postgres-data:
+    # Named volume with a fixed name so a Compose file rename does not orphan the data.
+    name: gametopup-prod-postgres-data
