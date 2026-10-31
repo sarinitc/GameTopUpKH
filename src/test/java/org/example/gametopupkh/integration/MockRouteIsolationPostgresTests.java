@@ -22,14 +22,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** Mock adapters must never expose development mutation routes in a production profile. */
-@ActiveProfiles(value = {"production", "test"}, inheritProfiles = false)
+@ActiveProfiles(value = {"prod", "test"}, inheritProfiles = false)
 class MockRouteIsolationPostgresTests extends PostgresIntegrationTest {
 
     @Autowired private ApplicationContext context;
 
     @Test
     void productionProfileHasMockAdaptersButNoDevelopmentControllers() {
-        assertThat(context.getEnvironment().getActiveProfiles()).contains("production").doesNotContain("dev");
+        assertThat(context.getEnvironment().getActiveProfiles()).contains("prod").doesNotContain("dev");
         assertThat(context.getBeansOfType(MockPaymentGateway.class)).hasSize(1);
         assertAll(
                 () -> assertThat(context.getBeansOfType(MockPaymentController.class)).isEmpty(),
