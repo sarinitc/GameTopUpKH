@@ -31,10 +31,12 @@
 
 **Files:** SecurityConfig.java, a focused CORS configuration if needed, application.yml, and CORS security tests.
 
-- [ ] Test allowed-origin Authorization/Content-Type preflight, rejection of other origins, default deny, wildcard rejection, and unchanged protected API authentication.
+- [x] Test allowed-origin Authorization/Content-Type preflight, rejection of other origins, default deny, wildcard rejection, and unchanged protected API authentication.
 - [ ] Run those tests before implementation and confirm the expected failures.
-- [ ] Implement exact origin configuration via APP_CORS_ALLOWED_ORIGINS (comma-separated, empty default); support GET, POST, PUT, PATCH, DELETE, OPTIONS, Authorization, Content-Type, and Idempotency-Key. Use bearer-token requests without credentialed cookies.
-- [ ] Run focused tests and record results.
+  - Not done as strict TDD: tests were written with the implementation and validated afterwards.
+- [x] Implement exact origin configuration via APP_CORS_ALLOWED_ORIGINS (comma-separated, empty default); support GET, POST, PUT, PATCH, DELETE, OPTIONS, Authorization, Content-Type, and Idempotency-Key. Use bearer-token requests without credentialed cookies.
+- [x] Run focused tests and record results.
+  - `CorsConfigurationTests` (6) and `CorsPropertiesTests` (5) pass; a real preflight against the Compose stack returned 200 for the configured Vercel origin and 403 for an unknown one.
 
 ## Task 2: Docker runtime and operating guide
 
@@ -58,9 +60,9 @@
 
 ## Task 4: Verification and review
 
-- [ ] Run the complete Maven verification suite with Docker available for isolated PostgreSQL tests; report failures honestly.
-- [ ] Run git diff --check and review the complete changes independently.
-- [ ] Record build, Compose, smoke-test and review outcomes below.
+- [x] Run the complete Maven verification suite with Docker available for isolated PostgreSQL tests; report failures honestly.
+- [x] Run git diff --check and review the complete changes independently.
+- [x] Record build, Compose, smoke-test and review outcomes below.
 
 ## Execution record
 
@@ -68,5 +70,7 @@
 - Docker engine access succeeds outside the restricted sandbox (28.1.1). No remote host is selected.
 - Tasks 2 and 3 executed. Verified: `mvn -DskipTests package` builds one executable JAR; `docker build` succeeds (335 MB image); `docker compose --env-file <dummy> -f docker-compose.prod.yaml config` passes with dummy values and fails with an explicit message when `JWT_SECRET` is absent; the full `docker compose ... up -d --build` stack starts with the app gated on `pg_isready`, applies all 12 Flyway migrations, and returns 200 on `/actuator/health/readiness`, 404 on `/v3/api-docs`, `/swagger-ui.html` and the dev payment route, 401 on `/actuator/metrics`, with `ReadonlyRootfs=true`, `User=10001:10001` and the API published on `127.0.0.1:18082` only. Startup aborts when `JWT_SECRET` is missing.
 - Defects found and fixed during smoke testing: Hikari `connection-timeout`/`validation-timeout` are milliseconds, not durations (the first `10s`/`5s` values prevented startup); the Compose `app` service was missing its `build:` section, so `up --build` attempted a registry pull instead of a local build.
-- Full suite: `mvn test` ran 508 tests with 0 failures, 0 errors, 0 skipped.
-- Remaining: Task 1 (CORS) and Task 4 (diff check and independent review). The existing `MockRouteIsolationPostgresTests` still activates a profile named `production`, which has no configuration file; only `prod` is configured.
+- Full suite: `mvn test` ran 508 tests with 0 failures, 0 errors, 0 skipped (before CORS and profile work); after both, 519 tests with 0 failures, 0 errors, 0 skipped.
+- Task 1: CORS allowlist added (`CorsProperties`, `corsConfigurationSource`, `.cors(...)`), 11 new tests. Live preflight on the Compose stack: 200 plus `Access-Control-Allow-Origin: https://gametopup-kh.vercel.app` and `Access-Control-Allow-Methods: GET,POST,PUT,PATCH,DELETE,OPTIONS` for the allowed origin; 403 with no CORS headers for `https://attacker.example.com`; requests with no `Origin` header unaffected.
+- Task 4: `MockRouteIsolationPostgresTests` now activates `prod` instead of the non-existent `production`; test properties gained the prod placeholder value; focused and full suites pass; `git diff --check` clean.
+- Remaining launch blockers (not code): secrets rotated and history purged, real payment gateway, authorized supplier adapter, email/SMS delivery, host/domain/TLS, backups and monitoring.
