@@ -1,0 +1,57 @@
+# Render Blueprint for the GameTopUp KH backend.
+#
+# Create the service with Render → New → Blueprint, or ignore this file and create
+# a Web Service manually (runtime: Docker, Dockerfile at the repo root).
+#
+# Values marked `sync: false` are secrets: Render prompts for them when the
+# blueprint is created and stores them encrypted. Never commit real values here.
+#
+# The database is external (Neon). This blueprint does not create one.
+services:
+  - type: web
+    name: gametopup-kh-api
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /actuator/health/readiness
+
+    envVars:
+      - key: SPRING_PROFILES_ACTIVE
+        value: prod
+
+      # PORT is injected by Render and read by application-prod.yml; do not set it.
+
+      # Neon PostgreSQL. Use the direct (non-pooler) host so Flyway can take its
+      # migration lock; append ?sslmode=require to the JDBC URL.
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: DB_POOL_SIZE
+        value: "5"
+      - key: DB_POOL_MIN_IDLE
+        value: "2"
+
+      # Required secrets.
+      - key: JWT_SECRET
+        sync: false
+      - key: APP_PASSWORD_RESET_FRONTEND_BASE_URL
+        sync: false
+      - key: APP_CORS_ALLOWED_ORIGINS
+        sync: false
+
+      # Commerce safety rails: mock providers only, no dev routes, no background jobs.
+      - key: APP_DEV_TOOLS_ENABLED
+        value: "false"
+      - key: PAYMENT_GATEWAY
+        value: mock
+      - key: SUPPLIER_CLIENT
+        value: mock
+      - key: FULFILLMENT_WORKER_ENABLED
+        value: "false"
+      - key: PAYMENT_RECONCILIATION_ENABLED
+        value: "false"

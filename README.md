@@ -2,12 +2,31 @@
 
 Backend REST API for the GameTopUp learning project.
 
+> **Portfolio / staging status.** Payments and game-credit delivery are
+> **mocked** (`PAYMENT_GATEWAY=mock`, `SUPPLIER_CLIENT=mock`). Orders are
+> recorded, but no money is captured and no diamonds are delivered. Email/SMS
+> verification returns `503` outside development, and the public repository
+> history contains an old `.env` whose secrets must be rotated before any real
+> use. Deployment guides: [Render](docs/deployment/render.md) and
+> [Docker Compose](docs/deployment/docker-production.md).
+
 ## Technologies
 - Java
 - Spring Boot
 - PostgreSQL
 - Docker
 - Maven
+
+## Deployment
+
+| Target | Guide | Notes |
+| --- | --- | --- |
+| Render (Docker) + Neon | `docs/deployment/render.md` | Free tier sleeps when idle; CORS via `APP_CORS_ALLOWED_ORIGINS` |
+| Self-hosted Docker Compose | `docs/deployment/docker-production.md` | Loopback-only port, TLS proxy in front, backups and rollback |
+
+The production profile is `prod`, selected with `SPRING_PROFILES_ACTIVE=prod`.
+It disables dev routes and Swagger, validates the schema with Flyway/Hibernate,
+and refuses to start without database credentials and `JWT_SECRET`.
 
 ## Setup
 

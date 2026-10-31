@@ -4,6 +4,9 @@ Runbook for deploying the GameTopUp KH backend as a Docker Compose stack on a
 single Linux host. It covers preparation and local verification only; publishing
 requires a destination, a domain, and TLS, which are operator decisions.
 
+For a PaaS deployment with an external managed database, see
+[Render](render.md).
+
 ## Exact deploy command
 
 After the host env file exists (sections 1–2) and TLS is configured (section 6):
