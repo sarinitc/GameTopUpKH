@@ -4,8 +4,9 @@
 !.env.example
 !.env.production.example
 
-# Build output and IDE/tooling state
+# Build output, dependencies and IDE/tooling state
 target/
+node_modules/
 .git/
 .idea/
 .vscode/

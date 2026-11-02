@@ -20,6 +20,9 @@ import org.example.gametopupkh.order.OrderRepository;
 import org.example.gametopupkh.order.OrderStatus;
 import org.example.gametopupkh.order.OrderStatusHistory;
 import org.example.gametopupkh.order.OrderStatusHistoryRepository;
+import org.example.gametopupkh.payment.bakong.BakongKhqrService;
+import org.example.gametopupkh.payment.bakong.BakongVerificationService;
+import org.example.gametopupkh.payment.bakong.dto.BakongKhqrResponse;
 import org.example.gametopupkh.payment.dto.CreatePaymentResponse;
 import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
 import org.example.gametopupkh.payment.gateway.PaymentGateway;
@@ -69,6 +72,8 @@ public class PaymentServiceImpl implements PaymentService {
     private final UserRepository userRepository;
     private final PaymentGateway gateway;
     private final FulfillmentService fulfillmentService;
+    private final BakongKhqrService bakongKhqrService;
+    private final BakongVerificationService bakongVerificationService;
     private final TransactionTemplate requiresNewTransaction;
     private final TransactionTemplate joiningTransaction;
     private final Duration reconciliationCooldown;
@@ -83,6 +88,8 @@ public class PaymentServiceImpl implements PaymentService {
             UserRepository userRepository,
             PaymentGateway gateway,
             FulfillmentService fulfillmentService,
+            BakongKhqrService bakongKhqrService,
+            BakongVerificationService bakongVerificationService,
             PlatformTransactionManager transactionManager,
             @Value("${payment.reconcile.cooldown:PT30S}") Duration reconciliationCooldown,
             @Value("${payment.aba.callback-url:http://localhost:8082/api/v1/payments/aba/callback}")
@@ -94,6 +101,8 @@ public class PaymentServiceImpl implements PaymentService {
         this.userRepository = userRepository;
         this.gateway = gateway;
         this.fulfillmentService = fulfillmentService;
+        this.bakongKhqrService = bakongKhqrService;
+        this.bakongVerificationService = bakongVerificationService;
         this.requiresNewTransaction = transactionTemplate(transactionManager,
                 TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.joiningTransaction = transactionTemplate(transactionManager,
@@ -155,6 +164,72 @@ public class PaymentServiceImpl implements PaymentService {
         } catch (RuntimeException e) {
             markCreationUncertain(reserved.getId(), customer.getId());
             throw providerUnavailable();
+        }
+    }
+
+    @Override
+    public CreatePaymentResponse createBakongPayment(UUID orderId, UUID userId) {
+        User customer = requireActiveUser(userId);
+        Order order = orderRepository.findWithUserById(orderId)
+                .orElseThrow(() -> orderNotFound(orderId));
+        if (order.getUser() == null || !order.getUser().getId().equals(customer.getId())) {
+            throw orderNotFound(orderId);
+        }
+
+        PaymentProvider provider = PaymentProvider.BAKONG;
+        Optional<Payment> existing = paymentRepository.findByOrderId(orderId);
+        if (order.getStatus() != OrderStatus.PENDING_PAYMENT) {
+            if (existing.isPresent() && existing.get().getStatus().isSuccessful()) {
+                fulfillCompletedPayment(existing.get());
+                return CreatePaymentResponse.from(existing.get());
+            }
+            throw conflict("PAYMENT_NOT_PAYABLE",
+                    "The order is not waiting for payment");
+        }
+        if (existing.isPresent()) {
+            return resume(existing.get(), provider);
+        }
+
+        Reservation reservation;
+        try {
+            reservation = reserve(order, customer, provider);
+        } catch (DataIntegrityViolationException e) {
+            Payment concurrent = paymentRepository.findByOrderId(orderId)
+                    .orElseThrow(() -> conflict("PAYMENT_IN_PROGRESS",
+                            "A payment for this order is already being initialized"));
+            return resume(concurrent, provider);
+        }
+        if (!reservation.created()) {
+            return resume(reservation.payment(), provider);
+        }
+
+        Payment reserved = reservation.payment();
+        try {
+            BakongKhqrResponse khqr = bakongKhqrService.generateDynamicKhqr(
+                    reserved.getAmount(),
+                    reserved.getCurrency(),
+                    reserved.getReference());
+
+            Payment applied = inWriteTransaction(() -> {
+                Payment p = paymentRepository.findByIdForUpdate(reserved.getId())
+                        .orElseThrow(() -> paymentNotFound(reserved.getId()));
+                p.setQrString(khqr.qr());
+                p.setQrMd5(khqr.md5());
+                p.setExpiresAt(databasePrecision(khqr.expiresAt()));
+                p.setStatus(PaymentStatus.PENDING);
+                Payment saved = paymentRepository.save(p);
+                recordEvent(saved.getId(), EVENT_CREATE, null,
+                        "Bakong dynamic KHQR generated with MD5 " + khqr.md5(), customer.getId());
+                return saved;
+            });
+            return CreatePaymentResponse.from(applied);
+        } catch (ApiException e) {
+            markCreationUncertain(reserved.getId(), customer.getId());
+            throw e;
+        } catch (RuntimeException e) {
+            markCreationUncertain(reserved.getId(), customer.getId());
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "PAYMENT_PROVIDER_UNAVAILABLE",
+                    "Could not initialize Bakong payment: " + e.getMessage());
         }
     }
 
@@ -253,6 +328,10 @@ public class PaymentServiceImpl implements PaymentService {
 
     @Override
     public PaymentStatusResponse verifyPayment(UUID paymentId) {
+        Payment payment = requirePayment(paymentId);
+        if (payment.getProvider() == PaymentProvider.BAKONG) {
+            return bakongVerificationService.verifyPayment(paymentId);
+        }
         return reconcileInternal(paymentId, null,
                 EVENT_RECONCILIATION, EVENT_RECONCILIATION_SKIPPED, EVENT_RECONCILIATION_ERROR);
     }
@@ -286,6 +365,9 @@ public class PaymentServiceImpl implements PaymentService {
     private PaymentStatusResponse reconcileInternal(UUID paymentId, UUID actorUserId,
             String eventType, String throttledEventType, String errorEventType) {
         Payment payment = requirePayment(paymentId);
+        if (payment.getProvider() == PaymentProvider.BAKONG) {
+            return bakongVerificationService.verifyPayment(paymentId, actorUserId);
+        }
         PaymentProvider provider = providerOf(gateway.name());
         requireMatchingProvider(payment, provider);
 

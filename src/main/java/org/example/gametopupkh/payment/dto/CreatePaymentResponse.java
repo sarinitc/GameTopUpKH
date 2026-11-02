@@ -25,7 +25,26 @@ public record CreatePaymentResponse(
         String qrImageUrl,
         String redirectUrl,
         Instant expiresAt,
-        Instant createdAt) {
+        Instant createdAt,
+        String qrMd5) {
+
+    public CreatePaymentResponse(
+            UUID paymentId,
+            UUID orderId,
+            PaymentProvider provider,
+            String reference,
+            String gatewayReference,
+            PaymentStatus status,
+            BigDecimal amount,
+            String currency,
+            String qrString,
+            String qrImageUrl,
+            String redirectUrl,
+            Instant expiresAt,
+            Instant createdAt) {
+        this(paymentId, orderId, provider, reference, gatewayReference, status,
+                amount, currency, qrString, qrImageUrl, redirectUrl, expiresAt, createdAt, null);
+    }
 
     public String qrImage() {
         return qrImageUrl;
@@ -45,6 +64,7 @@ public record CreatePaymentResponse(
                 payment.getQrImageUrl(),
                 payment.getRedirectUrl(),
                 payment.getExpiresAt(),
-                payment.getCreatedAt());
+                payment.getCreatedAt(),
+                payment.getQrMd5());
     }
 }

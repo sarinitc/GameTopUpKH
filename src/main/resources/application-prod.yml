@@ -10,15 +10,15 @@ spring:
 
   datasource:
     # No localhost fallback: a missing datasource URL must fail startup, not
-    # silently connect to a developer database.
-    url: ${SPRING_DATASOURCE_URL}
-    username: ${SPRING_DATASOURCE_USERNAME}
-    password: ${SPRING_DATASOURCE_PASSWORD}
+    # silently connect to a developer database. Supports both SPRING_DATASOURCE_* and DB_*.
+    url: ${SPRING_DATASOURCE_URL:${DB_URL}}
+    username: ${SPRING_DATASOURCE_USERNAME:${DB_USER}}
+    password: ${SPRING_DATASOURCE_PASSWORD:${DB_PASSWORD}}
     hikari:
-      maximum-pool-size: ${DB_POOL_SIZE:10}
+      maximum-pool-size: ${DB_POOL_SIZE:5}
       minimum-idle: ${DB_POOL_MIN_IDLE:2}
-      # Hikari timeouts are plain milliseconds, not durations.
-      connection-timeout: 10000
+      # Connection timeout allows Neon serverless compute cold-starts
+      connection-timeout: 30000
       validation-timeout: 5000
 
   jpa:
@@ -38,6 +38,7 @@ spring:
     clean-disabled: true
     validate-on-migrate: true
     baseline-on-migrate: false
+    connect-retries: 5
 
   lifecycle:
     timeout-per-shutdown-phase: 30s
@@ -46,6 +47,7 @@ server:
   # Render and most PaaS providers inject PORT; the Compose file sets SERVER_PORT.
   # Local default stays 8082.
   port: ${PORT:${SERVER_PORT:8082}}
+  address: 0.0.0.0
   # Finish in-flight requests on SIGTERM instead of dropping them.
   shutdown: graceful
   # Trust X-Forwarded-* from the TLS reverse proxy so audit logs and rate limits
@@ -61,14 +63,19 @@ app:
     # Mock payment confirmation and mock delivery routes must never exist in
     # production, even if an environment variable is set incorrectly.
     enabled: false
+  cors:
+    # Allowed storefront origins: defaults to Cloudflare Workers frontend, overridable by APP_CORS_ALLOWED_ORIGINS
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:https://gametopupkh.cheavsaren65.workers.dev}
   password-reset:
-    frontend-base-url: ${APP_PASSWORD_RESET_FRONTEND_BASE_URL}
+    frontend-base-url: ${APP_PASSWORD_RESET_FRONTEND_BASE_URL:${PASSWORD_RESET_FRONTEND_BASE_URL:https://gametopupkh.cheavsaren65.workers.dev}}
 
 payment:
   gateway: ${PAYMENT_GATEWAY:mock}
   aba:
     environment: ${ABA_PAYWAY_ENVIRONMENT:sandbox}
     live-payments-enabled: false
+  bakong:
+    enabled: ${BAKONG_PAYMENT_ENABLED:false}
   reconciliation:
     # Scheduled provider polling is disabled until a live gateway is approved.
     enabled: ${PAYMENT_RECONCILIATION_ENABLED:false}

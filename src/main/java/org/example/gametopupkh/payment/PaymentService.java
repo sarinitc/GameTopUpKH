@@ -22,6 +22,15 @@ public interface PaymentService {
     CreatePaymentResponse createAbaPayment(UUID orderId, UUID userId);
 
     /**
+     * Initializes a Bakong KHQR payment for an order owned by the caller.
+     *
+     * @param orderId the order that is waiting for payment
+     * @param userId  the authenticated customer
+     * @return the stable reference, dynamic KHQR and MD5 payload, or the existing one for this order
+     */
+    CreatePaymentResponse createBakongPayment(UUID orderId, UUID userId);
+
+    /**
      * Reads a payment without contacting the provider.
      *
      * @param paymentId  the payment to read

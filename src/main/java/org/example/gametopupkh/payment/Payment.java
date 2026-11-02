@@ -77,6 +77,15 @@ public class Payment {
     @Column(name = "last_provider_check_at")
     private Instant lastProviderCheckAt;
 
+    @Column(name = "qr_md5", length = 32)
+    private String qrMd5;
+
+    @Column(name = "bakong_hash", length = 255)
+    private String bakongHash;
+
+    @Column(name = "verification_attempts", nullable = false)
+    private int verificationAttempts = 0;
+
     @Column(name = "created_at", nullable = false)
     private Instant createdAt;
 

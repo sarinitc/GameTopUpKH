@@ -62,7 +62,7 @@ public class PaymentReconciliationServiceImpl implements PaymentReconciliationSe
     public PaymentReconciliationResult reconcile() {
         Instant startedAt = Instant.now();
         PaymentProvider provider = activeProvider();
-        if (provider != PaymentProvider.ABA) {
+        if (provider != PaymentProvider.ABA && provider != PaymentProvider.BAKONG) {
             return summarize(startedAt, List.of());
         }
 

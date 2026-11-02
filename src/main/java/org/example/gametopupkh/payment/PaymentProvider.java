@@ -5,5 +5,6 @@ package org.example.gametopupkh.payment;
  */
 public enum PaymentProvider {
     MOCK,
-    ABA
+    ABA,
+    BAKONG
 }

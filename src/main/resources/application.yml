@@ -9,6 +9,7 @@ server:
   # PaaS providers (Render, Heroku, Cloud Run) inject PORT; Compose sets
   # SERVER_PORT. Local runs fall back to 8082.
   port: ${PORT:${SERVER_PORT:8082}}
+  address: 0.0.0.0
 
 management:
   endpoints:
@@ -97,6 +98,18 @@ payment:
     connect-timeout: ${ABA_PAYWAY_CONNECT_TIMEOUT:5s}
     read-timeout: ${ABA_PAYWAY_READ_TIMEOUT:15s}
     max-retries: ${ABA_PAYWAY_MAX_RETRIES:2}
+  bakong:
+    environment: ${BAKONG_ENVIRONMENT:production}
+    enabled: ${BAKONG_PAYMENT_ENABLED:false}
+    base-url: ${BAKONG_BASE_URL:https://api-bakong.nbc.gov.kh}
+    api-token: ${BAKONG_API_TOKEN:}
+    account-id: ${BAKONG_ACCOUNT_ID:}
+    merchant-name: ${BAKONG_MERCHANT_NAME:GameTopUp-KH}
+    merchant-city: ${BAKONG_MERCHANT_CITY:Phnom Penh}
+    lifetime-minutes: ${BAKONG_LIFETIME_MINUTES:10}
+    connect-timeout: ${BAKONG_CONNECT_TIMEOUT:5s}
+    read-timeout: ${BAKONG_READ_TIMEOUT:15s}
+    max-retries: ${BAKONG_MAX_RETRIES:2}
   reconciliation:
     enabled: ${PAYMENT_RECONCILIATION_ENABLED:true}
     batch-size: ${PAYMENT_RECONCILIATION_BATCH_SIZE:50}

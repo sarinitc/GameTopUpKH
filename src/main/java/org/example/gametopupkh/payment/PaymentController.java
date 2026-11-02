@@ -6,6 +6,7 @@ import java.util.UUID;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.common.response.ApiResponse;
+import org.example.gametopupkh.payment.bakong.dto.BakongKhqrOrderRequest;
 import org.example.gametopupkh.payment.dto.CreatePaymentResponse;
 import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
 import org.springframework.http.HttpStatus;
@@ -16,6 +17,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -41,6 +43,36 @@ public class PaymentController {
 
     @GetMapping("/api/v1/orders/{orderId}/payments/aba")
     public ResponseEntity<ApiResponse<CreatePaymentResponse>> getAbaPaymentByOrder(
+            @PathVariable UUID orderId,
+            @AuthenticationPrincipal UserDetails principal) {
+        CreatePaymentResponse payment = paymentService.getPaymentByOrder(
+                orderId, currentUserId(principal), isAdmin(principal));
+        return ResponseEntity.ok(ApiResponse.ok(payment));
+    }
+
+    @PostMapping("/api/v1/orders/{orderId}/payments/bakong")
+    public ResponseEntity<ApiResponse<CreatePaymentResponse>> createBakongPayment(
+            @PathVariable UUID orderId,
+            @AuthenticationPrincipal UserDetails principal) {
+        CreatePaymentResponse payment = paymentService.createBakongPayment(orderId, currentUserId(principal));
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(payment));
+    }
+
+    @PostMapping("/api/v1/payments/bakong/khqr")
+    public ResponseEntity<ApiResponse<CreatePaymentResponse>> createBakongKhqrPayment(
+            @RequestBody(required = false) BakongKhqrOrderRequest request,
+            @RequestParam(required = false) UUID orderId,
+            @AuthenticationPrincipal UserDetails principal) {
+        UUID effectiveOrderId = (request != null && request.orderId() != null) ? request.orderId() : orderId;
+        if (effectiveOrderId == null) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "ORDER_ID_REQUIRED", "orderId is required");
+        }
+        CreatePaymentResponse payment = paymentService.createBakongPayment(effectiveOrderId, currentUserId(principal));
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(payment));
+    }
+
+    @GetMapping("/api/v1/orders/{orderId}/payments/bakong")
+    public ResponseEntity<ApiResponse<CreatePaymentResponse>> getBakongPaymentByOrder(
             @PathVariable UUID orderId,
             @AuthenticationPrincipal UserDetails principal) {
         CreatePaymentResponse payment = paymentService.getPaymentByOrder(

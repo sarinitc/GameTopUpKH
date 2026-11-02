@@ -24,6 +24,12 @@ public interface PaymentRepository extends JpaRepository<Payment, UUID> {
 
     Optional<Payment> findByGatewayReference(String gatewayReference);
 
+    Optional<Payment> findByQrMd5(String qrMd5);
+
+    Optional<Payment> findByBakongHash(String bakongHash);
+
+    boolean existsByBakongHash(String bakongHash);
+
     boolean existsByReference(String reference);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)

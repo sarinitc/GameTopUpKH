@@ -26,7 +26,29 @@ public record PaymentStatusResponse(
         Instant expiresAt,
         Instant paidAt,
         Instant createdAt,
-        Instant updatedAt) {
+        Instant updatedAt,
+        String qrMd5,
+        String bakongHash) {
+
+    public PaymentStatusResponse(
+            UUID paymentId,
+            UUID orderId,
+            PaymentProvider provider,
+            String reference,
+            String gatewayReference,
+            PaymentStatus status,
+            BigDecimal amount,
+            String currency,
+            String qrString,
+            String qrImageUrl,
+            String redirectUrl,
+            Instant expiresAt,
+            Instant paidAt,
+            Instant createdAt,
+            Instant updatedAt) {
+        this(paymentId, orderId, provider, reference, gatewayReference, status,
+                amount, currency, qrString, qrImageUrl, redirectUrl, expiresAt, paidAt, createdAt, updatedAt, null, null);
+    }
 
     public String qrImage() {
         return qrImageUrl;
@@ -48,6 +70,8 @@ public record PaymentStatusResponse(
                 payment.getExpiresAt(),
                 payment.getPaidAt(),
                 payment.getCreatedAt(),
-                payment.getUpdatedAt());
+                payment.getUpdatedAt(),
+                payment.getQrMd5(),
+                payment.getBakongHash());
     }
 }

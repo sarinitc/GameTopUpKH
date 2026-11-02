@@ -45,6 +45,7 @@ class SupplierManagementApiTests {
                 .andExpect(jsonPath("$.data.name").value("Inactive supplier"))
                 .andExpect(jsonPath("$.data.status").value("INACTIVE"))
                 .andExpect(jsonPath("$.data.createdAt").exists()).andExpect(jsonPath("$.data.updatedAt").exists()));
+        Thread.sleep(25);
         String active = supplier("ACTIVE");
         admin(get(SUPPLIERS)).andExpect(status().isOk()).andExpect(jsonPath("$.data.content", hasSize(2)))
                 .andExpect(jsonPath("$.data.content[0].id").value(active));

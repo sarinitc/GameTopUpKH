@@ -151,25 +151,40 @@ payment/
 │   ├── PaymentReconciliationResult.java
 │   ├── PaymentReconciliationService.java
 │   └── PaymentReconciliationServiceImpl.java
-└── aba/
-    ├── AbaPayWayGateway.java
-    ├── AbaPayWayClient.java
-    ├── AbaPayWayProperties.java
-    ├── AbaPayWayHashService.java
-    ├── AbaPayWayCallbackController.java
-    ├── AbaPayWayCallbackVerifier.java
-    ├── AbaPayWayPaymentMapper.java
+├── aba/
+│   ├── AbaPayWayGateway.java
+│   ├── AbaPayWayClient.java
+│   ├── AbaPayWayProperties.java
+│   ├── AbaPayWayHashService.java
+│   ├── AbaPayWayCallbackController.java
+│   ├── AbaPayWayCallbackVerifier.java
+│   ├── AbaPayWayPaymentMapper.java
+│   └── dto/
+│       ├── AbaQrRequest.java
+│       ├── AbaQrResponse.java
+│       ├── AbaCheckTransactionRequest.java
+│       ├── AbaCheckTransactionResponse.java
+│       └── AbaCallbackRequest.java
+└── bakong/
+    ├── BakongApiClient.java
+    ├── BakongKhqrService.java
+    ├── BakongPaymentGateway.java
+    ├── BakongPaymentMapper.java
+    ├── BakongProperties.java
+    ├── BakongVerificationService.java
     └── dto/
-        ├── AbaQrRequest.java
-        ├── AbaQrResponse.java
-        ├── AbaCheckTransactionRequest.java
-        ├── AbaCheckTransactionResponse.java
-        └── AbaCallbackRequest.java
+        ├── BakongCheckTransactionRequest.java
+        ├── BakongCheckTransactionResponse.java
+        ├── BakongKhqrOrderRequest.java
+        └── BakongKhqrResponse.java
 ```
 
-The mock and ABA PayWay adapters are implemented. ABA uses the official generate-QR
+The mock, ABA PayWay, and Bakong KHQR adapters are implemented. ABA uses the official generate-QR
 and check-transaction-2 JSON APIs with HMAC-SHA512 request hashes by default;
 explicitly configured non-official paths retain the legacy configurable transport.
+Bakong KHQR implements dynamic EMVCo MPM KHQR generation with CRC-16 and MD5 hashing,
+accompanied by Bakong Open API status verification (POST /v1/check_transaction_by_md5).
+For comprehensive Bakong integration details, specifications, and workflows, see [Bakong KHQR Documentation](docs/integrations/bakong-khqr.md).
 ABA configuration, HTTP transport, and response mapping live in separate classes.
 The gateway's provider-neutral `PaymentRequest`, `PaymentIntent`, and
 `PaymentGatewayException` are nested types of `PaymentGateway`; `PaymentStatus`

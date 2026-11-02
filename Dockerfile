@@ -6,11 +6,14 @@
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /workspace
 
-COPY pom.xml ./
+COPY pom.xml mvnw ./
+COPY .mvn .mvn
+RUN chmod +x ./mvnw
+
 COPY src ./src
 
-RUN mvn -B -q -DskipTests package \
- && cp target/*.jar /workspace/application.jar
+RUN if [ -f "./mvnw" ]; then ./mvnw -B -DskipTests clean package; else mvn -B -DskipTests clean package; fi \
+ && cp target/GameTopUp-KH-*.jar /workspace/application.jar
 
 # ---- Runtime stage ---------------------------------------------------------
 FROM eclipse-temurin:17-jre-jammy
@@ -31,7 +34,7 @@ EXPOSE 8082
 # set a profile can never boot into `dev` (which enables mock mutation routes).
 # Any explicit SPRING_PROFILES_ACTIVE passed by the platform still wins.
 ENV SPRING_PROFILES_ACTIVE=prod \
-    JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75 -XX:+ExitOnOutOfMemoryError" \
+    JAVA_TOOL_OPTIONS="-XX:+UseSerialGC -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError" \
     TZ=UTC
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \

@@ -18,7 +18,7 @@ no server administration, TLS is handled by Render.
 | Port | Render injects `PORT`; the app binds `${PORT:${SERVER_PORT:8082}}` |
 | Health check | `/actuator/health/readiness` (200 with `status: UP` only when the DB answers) |
 | Profiles | Image default `ENV SPRING_PROFILES_ACTIVE=prod`, overridable from the dashboard |
-| Schema | Flyway runs `V1`–`V12` on the first boot, then Hibernate validates only |
+| Schema | Flyway runs `V1`–`V13` on the first boot, then Hibernate validates only |
 | Database | External Neon PostgreSQL (`sslmode=require`), no Render disk |
 | Start command | Image `ENTRYPOINT` (`java -jar /app/application.jar`); do not override |
 
@@ -44,7 +44,7 @@ no server administration, TLS is handled by Render.
 5. **Verify:** `curl.exe --fail https://<service>.onrender.com/actuator/health`
    must return `{"groups":["liveness","readiness"],"status":"UP"}`, and the
    readiness path (the Render health check) must report `UP` after Flyway
-   finishes `V1`–`V12` on the first boot.
+   finishes `V1`–`V13` on the first boot.
 
 ```properties
 SPRING_PROFILES_ACTIVE=prod
@@ -52,8 +52,8 @@ SPRING_DATASOURCE_URL=jdbc:postgresql://<neon-host>/neondb?sslmode=require
 SPRING_DATASOURCE_USERNAME=<neon-user>
 SPRING_DATASOURCE_PASSWORD=<NEON_PASSWORD>
 JWT_SECRET=<64-plus-random-characters>
-APP_CORS_ALLOWED_ORIGINS=https://your-app.vercel.app
-APP_PASSWORD_RESET_FRONTEND_BASE_URL=https://your-app.vercel.app
+APP_CORS_ALLOWED_ORIGINS=https://gametopupkh.cheavsaren65.workers.dev
+APP_PASSWORD_RESET_FRONTEND_BASE_URL=https://gametopupkh.cheavsaren65.workers.dev
 DB_POOL_SIZE=5
 DB_POOL_MIN_IDLE=2
 ```
