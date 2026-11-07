@@ -15,5 +15,6 @@ public enum AuditAction {
     REFUND,
     LOGIN,
     LOGOUT,
-    PASSWORD_RESET;
+    PASSWORD_RESET,
+    ADMIN_BOOTSTRAP;
 }

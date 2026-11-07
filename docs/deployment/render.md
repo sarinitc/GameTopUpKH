@@ -121,6 +121,7 @@ PAYMENT_GATEWAY=mock
 SUPPLIER_CLIENT=mock
 FULFILLMENT_WORKER_ENABLED=false
 PAYMENT_RECONCILIATION_ENABLED=false
+SPRINGDOC_ENABLED=false
 ```
 
 **Do not set `PORT`.** Render injects it and the app reads it. If you do set it
@@ -156,8 +157,154 @@ curl.exe -s -o NUL -w "%{http_code}`n" https://<your-service>.onrender.com/api/v
 ```
 
 Expected: `{"groups":["liveness","readiness"],"status":"UP"}`, readiness `UP`,
-and `200` for the public games list. `/v3/api-docs` must return `404` (Swagger is
-disabled in `prod`).
+and `200` for the public games list. `/v3/api-docs` must return `401` for an
+anonymous caller: Swagger is disabled by default in `prod`, and the docs paths
+require an ADMIN token even when Springdoc is not registered.
+
+### Production Swagger (opt-in, ADMIN only)
+
+Swagger is off unless `SPRINGDOC_ENABLED=true` is set on the Render service.
+Enabling it does **not** make the docs public: `application-prod.yml` keeps
+`app.openapi.public: false`, so `SecurityConfig` requires a valid ADMIN JWT for
+`/v3/api-docs`, `/v3/api-docs/**`, `/swagger-ui.html` and `/swagger-ui/**`.
+Do not set `APP_OPENAPI_PUBLIC=true` unless you deliberately want every caller
+to read the API document.
+
+Verify the opt-in with an admin login:
+
+```powershell
+$login = Invoke-RestMethod -Method Post `
+  -Uri "https://<your-service>.onrender.com/api/v1/auth/login" `
+  -ContentType "application/json" `
+  -Body '{"identifier":"<admin-email>","password":"<admin-password>"}'
+
+Invoke-RestMethod -Uri "https://<your-service>.onrender.com/v3/api-docs" `
+  -Headers @{ Authorization = "Bearer $($login.data.accessToken)" }
+```
+
+A `200` with an `openapi` field proves Springdoc is registered *and* the caller is
+an ADMIN. Anonymous browsers cannot open Swagger UI because navigation cannot
+attach a bearer token to the HTML request. To use the UI, inject the header for
+the Render origin only (ModHeader, Requestly, or a dedicated browser profile):
+
+| Header | Value | Scope |
+| --- | --- | --- |
+| `Authorization` | `Bearer <accessToken>` | `https://<your-service>.onrender.com/*` |
+
+Then open `https://<your-service>.onrender.com/swagger-ui/index.html` and remove
+or disable the header when finished. Access tokens live for 15 minutes; renew
+them with `POST /api/v1/auth/refresh` and update the header value. Prefer curl
+or Postman when a browser extension is not acceptable.
+
+| Response | Meaning |
+| --- | --- |
+| `401` | No token, or the access token expired or is malformed |
+| `403` | Authenticated, but the account does not have `ROLE_ADMIN` |
+| `404` | Springdoc is not registered: `SPRINGDOC_ENABLED=true` is missing on the running service, or the deploy is behind the current commit |
+
+### First ADMIN provisioning (one-time, server-side)
+
+Registration never creates an administrator. The registration payload has no role
+field and `AuthServiceImpl` always assigns `USER`; there is no public
+admin-registration endpoint. Use the built-in one-time bootstrap instead of editing
+roles by hand.
+
+The bootstrap runs at startup only when it is explicitly enabled, and is disabled
+by default. It targets exactly one existing account by email, never accepts a
+client-supplied role, and writes an `ADMIN_BOOTSTRAP` audit row.
+
+**Prerequisites**
+
+1. The target account already exists (register normally first).
+2. `users.account_status = 'ACTIVE'`.
+3. `users.email_verified = true` **or** `users.phone_verified = true`.
+4. `SPRINGDOC_ENABLED=true` on the running service if you also want the docs.
+
+> **Verification blocker:** outside the `dev` profile the app uses
+> `UnavailableVerificationCodeSender`, so `POST /api/v1/auth/verify/...` returns
+> `503 VERIFICATION_DELIVERY_UNAVAILABLE`. A fresh production account is usually
+> unverified, and the bootstrap will fail closed. Configure a real email/SMS sender
+> (or verify the account through an approved path) before expecting a grant. Do
+> **not** update `email_verified`/`phone_verified` directly in Neon without a
+> reviewed, backed-up, explicitly approved operation.
+
+**Safe production sequence**
+
+1. Take a Neon branch or backup (Neon → Branches → create a branch, or export the
+   database). Record the current time.
+2. Run read-only prechecks against the direct (non-`-pooler`) Neon host:
+   ```sql
+   SELECT u.id, u.email, u.account_status, u.email_verified, u.phone_verified,
+          COALESCE(string_agg(r.name, ',' ORDER BY r.name), '') AS roles
+   FROM users u
+   LEFT JOIN user_roles ur ON ur.user_id = u.id
+   LEFT JOIN roles r ON r.id = ur.role_id
+   WHERE lower(u.email) = lower('<target-email>')
+   GROUP BY u.id;
+   ```
+   Confirm the row is `ACTIVE`, verified, and currently has only `USER` (or no
+   `ADMIN`).
+3. Add these environment variables to the Render service:
+   ```
+   APP_ADMIN_BOOTSTRAP_ENABLED=true
+   APP_ADMIN_BOOTSTRAP_EMAIL=<target-email>
+   APP_ADMIN_BOOTSTRAP_CONFIRM=GRANT_ADMIN
+   ```
+   Keep `SPRINGDOC_ENABLED=true` if you want Swagger afterwards.
+4. Save and redeploy. Watch the **Logs** tab. Success prints:
+   ```
+   One-time ADMIN bootstrap completed: GRANTED
+   ```
+   `ALREADY_ADMIN` means the account already had the role and nothing changed.
+   A `failed and no role was granted` line means a precondition failed; fix it and
+   redeploy, do not bypass the check.
+5. Immediately remove all three `APP_ADMIN_BOOTSTRAP_*` variables (and redeploy).
+   Leaving them enabled is unnecessary: a later email change would grant a second
+   account on the next restart. The runner is idempotent, but the variables are
+   meant to live for one deploy only.
+6. Log in again to receive a fresh access token. The grant increments
+   `users.token_version` and revokes the account's refresh tokens, so tokens issued
+   before the grant are rejected even if they have not expired.
+7. Confirm the audit row and then test the docs:
+   ```powershell
+   $login = Invoke-RestMethod -Method Post `
+     -Uri "https://<your-service>.onrender.com/api/v1/auth/login" `
+     -ContentType "application/json" `
+     -Body '{"identifier":"<target-email>","password":"<password>"}'
+
+   Invoke-RestMethod -Uri "https://<your-service>.onrender.com/v3/api-docs" `
+     -Headers @{ Authorization = "Bearer $($login.data.accessToken)" }
+   ```
+   A `200` with an `openapi` field confirms the fresh JWT carries `ROLE_ADMIN`.
+
+**Audit verification**
+
+The `audit_logs` row has `action = 'ADMIN_BOOTSTRAP'`, `actor_email =
+'system:admin-bootstrap'`, `actor_role = 'SYSTEM'`, `entity_type = 'users'`,
+`entity_id = <user id>`, and details with the verification channel, token-version
+change and revoked-refresh-token count. Read it with the new ADMIN token:
+
+```powershell
+Invoke-RestMethod `
+  -Uri "https://<your-service>.onrender.com/api/v1/admin/audit-logs?action=ADMIN_BOOTSTRAP" `
+  -Headers @{ Authorization = "Bearer $($login.data.accessToken)" }
+```
+
+**Rollback (only with explicit approval)**
+
+If the wrong account was selected, revoke the role and invalidate its sessions.
+Take a backup first and review the statements before running them:
+
+```sql
+BEGIN;
+DELETE FROM user_roles
+WHERE user_id = '<user-id>'
+  AND role_id = (SELECT id FROM roles WHERE name = 'ADMIN');
+UPDATE users SET token_version = token_version + 1 WHERE id = '<user-id>';
+UPDATE refresh_tokens SET revoked_at = now()
+WHERE user_id = '<user-id>' AND revoked_at IS NULL;
+COMMIT;
+```
 
 ## 5. Connect the Vercel frontend
 
@@ -215,6 +362,9 @@ public portfolio link.
 | First request times out after ~50 s | Free instance waking up; retry |
 | Browser `CORS` error | `APP_CORS_ALLOWED_ORIGINS` does not match the Vercel origin exactly |
 | `503 VERIFICATION_DELIVERY_UNAVAILABLE` | Expected: no email/SMS sender is implemented |
+| Swagger UI returns `401` in the browser | Expected while `app.openapi.public=false`; inject an ADMIN bearer header (see section 4) or use curl/Postman |
+| Swagger UI returns `403` | Signed in, but the account does not have `ROLE_ADMIN` |
+| `/v3/api-docs` returns `404` with an ADMIN token | `SPRINGDOC_ENABLED=true` is missing on the running service, or the deploy is behind the current commit |
 | Order stays `PENDING_PAYMENT` | Expected: mock gateway, dev tools disabled |
 
 ## Limitations (read before sharing the link)

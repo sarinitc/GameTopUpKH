@@ -12,6 +12,8 @@
 
 `MockRouteIsolationPostgresTests` runs with the `production` profile and deliberately retains only fake adapters through the test resources. It requires both development controllers to be absent, then attempts each payment-confirmation and fulfillment route anonymously and as an administrator. It checks the actual payment, order, fulfillment, attempt, and history rows remain unchanged.
 
+`AdminBootstrapServiceTests` covers the one-time first-ADMIN grant: it requires the exact `GRANT_ADMIN` confirmation, only targets an existing `ACTIVE` account with a verified email or phone, refuses unverified accounts, is idempotent for an existing administrator, increments `users.token_version`, revokes refresh tokens, and writes an `ADMIN_BOOTSTRAP` audit row without storing credentials. `AuthApiTests` also registers an account while sending `role`/`roles` fields and proves the client-supplied role is ignored (`USER` only) and that its real JWT gets `403` on an admin endpoint. `SwaggerUiAdminOnlyTests` registers and logs in a real user and proves that JWT gets `403` on `/v3/api-docs` while an ADMIN gets `200`.
+
 The existing `AuthApiTests`, `OrderApiTests`, catalog API tests, and `AuditLogApiTests` retain broader endpoint coverage. Existing `ActuatorApiTests` check public health probe redaction, administrator-only operational data, sensitive endpoint denial, and database-outage readiness behavior. Those tests predate this file and are not evidence that the new PostgreSQL tests have run.
 
 ## Review findings and limits

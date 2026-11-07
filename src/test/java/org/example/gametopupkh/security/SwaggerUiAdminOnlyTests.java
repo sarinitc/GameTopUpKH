@@ -1,17 +1,23 @@
 package org.example.gametopupkh.security;
 
+import java.util.UUID;
+
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -46,6 +52,31 @@ class SwaggerUiAdminOnlyTests {
     void nonAdminRolesAreForbidden(String path) throws Exception {
         mvc.perform(get(path).with(user("reader").roles("USER")))
                 .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
+    void aNormallyRegisteredUserWithARealJwtCannotReadTheOpenApiDocument() throws Exception {
+        String email = "swagger-user-" + UUID.randomUUID() + "@example.test";
+        String password = "Synthetic-password-42";
+        mvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fullName\":\"Swagger User\",\"email\":\"" + email
+                                + "\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isCreated());
+
+        MvcResult login = mvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"identifier\":\"" + email + "\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String accessToken = JsonPath.read(login.getResponse().getContentAsString(), "$.data.accessToken");
+
+        // The account is a real USER with an application-issued JWT: authentication
+        // succeeds, but the ADMIN-only OpenAPI rule must still deny it.
+        mvc.perform(get("/v3/api-docs").header(HttpHeaders.AUTHORIZATION, "Bearer " + accessToken))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.success").value(false))
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 

@@ -62,6 +62,14 @@ info:
     version: "@project.version@"
 
 app:
+  admin-bootstrap:
+    # One-time, server-side first-ADMIN provisioning. Keep disabled. When enabled,
+    # email must name an existing ACTIVE account that has completed email or phone
+    # verification, and confirmation must be exactly GRANT_ADMIN. Remove or disable
+    # these values immediately after the grant; there is no HTTP endpoint for this.
+    enabled: ${APP_ADMIN_BOOTSTRAP_ENABLED:false}
+    email: ${APP_ADMIN_BOOTSTRAP_EMAIL:}
+    confirmation: ${APP_ADMIN_BOOTSTRAP_CONFIRM:}
   dev-tools:
     # Development-only mutation routes (mock payment confirmation and mock delivery).
     # They are disabled by default so a production deployment cannot expose them by accident.

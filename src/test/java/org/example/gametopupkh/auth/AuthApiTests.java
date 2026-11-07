@@ -166,6 +166,29 @@ class AuthApiTests {
     }
 
     @Test
+    void registrationIgnoresClientSuppliedRoleAndGrantsOnlyUser() throws Exception {
+        String email = uniqueEmail();
+
+        mockMvc.perform(post("/api/v1/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fullName\":\"Sokha\",\"email\":\"" + email
+                                + "\",\"password\":\"" + PASSWORD
+                                + "\",\"role\":\"ADMIN\",\"roles\":[\"ADMIN\"],\"accountStatus\":\"ACTIVE\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.user.roles.length()").value(1))
+                .andExpect(jsonPath("$.data.user.roles[0]").value("USER"));
+
+        User stored = userRepository.findByEmailIgnoreCase(email).orElseThrow();
+        assertThat(stored.getRoleNames()).containsExactly("USER");
+
+        String token = login(email);
+        mockMvc.perform(get("/api/v1/admin/suppliers")
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    @Test
     void adminEndpointAcceptsAdminUser() throws Exception {
         String email = uniqueEmail();
         createUser(email, "ADMIN");

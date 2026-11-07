@@ -636,6 +636,33 @@ the token is missing or broken, `FORBIDDEN` (403) when the role is missing.
 The `roles` table is seeded by `V2__seed_default_roles.sql`: every self registered
 account gets the `USER` role, the `ADMIN` role unlocks the `/api/v1/admin/**` endpoints.
 
+### First ADMIN provisioning
+
+Registration never accepts a role. `RegisterRequest` has no role field and
+`AuthServiceImpl` always assigns `USER`; there is no public admin-registration
+endpoint. Use the one-time, server-side bootstrap instead of editing roles by hand:
+
+1. Register the intended account and complete email or phone verification.
+2. Start the backend once with:
+   - `APP_ADMIN_BOOTSTRAP_ENABLED=true`
+   - `APP_ADMIN_BOOTSTRAP_EMAIL=<exact registered email>`
+   - `APP_ADMIN_BOOTSTRAP_CONFIRM=GRANT_ADMIN`
+3. Check the startup log for `One-time ADMIN bootstrap completed: GRANTED`.
+4. Remove the three variables and restart. The grant is idempotent
+   (`ALREADY_ADMIN`) and refuses accounts that are not `ACTIVE` or have neither a
+   verified email nor a verified phone number.
+5. Log in again. The grant increments `users.token_version` and revokes refresh
+   tokens, so tokens issued before the grant cannot carry the new role.
+
+The bootstrap lives in `identity/bootstrap`, is disabled by default, has no HTTP
+endpoint, and appends an `ADMIN_BOOTSTRAP` row to `audit_logs` with the target user,
+verification channel, token-version change and revoked-token count. Production
+verification delivery is not implemented outside `dev`
+(`503 VERIFICATION_DELIVERY_UNAVAILABLE`), so a fresh production account must be
+verified through an approved delivery path before the bootstrap can succeed. See
+`docs/deployment/render.md` for the prechecks, backup, audit verification and
+rollback SQL.
+
 ## Orders
 
 The `order` module owns the `orders` table and the `order_status_history` table that
