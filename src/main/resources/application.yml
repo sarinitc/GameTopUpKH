@@ -66,6 +66,10 @@ app:
     # Development-only mutation routes (mock payment confirmation and mock delivery).
     # They are disabled by default so a production deployment cannot expose them by accident.
     enabled: ${APP_DEV_TOOLS_ENABLED:false}
+  openapi:
+    # Local development keeps Swagger UI/OpenAPI public. application-prod.yml
+    # overrides this to false, so opt-in production docs require an ADMIN token.
+    public: true
   cors:
     # Comma-separated exact browser origins allowed to call /api/**.
     # Empty disables cross-origin browser access; a wildcard is rejected at startup.

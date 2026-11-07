@@ -13,6 +13,7 @@ import org.example.gametopupkh.identity.repository.UserRepository;
 import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.config.Customizer;
@@ -46,12 +47,23 @@ public class SecurityConfig {
             "/api/v1/dev/fulfillments/**",
             "/api/v1/payments/aba/callback",
             "/api/v1/payments/mock/**",
+            "/error"
+    };
+
+    /**
+     * Locally Swagger UI and the OpenAPI document are public for developer
+     * convenience. Production overrides {@code app.openapi.public=false}, and
+     * these paths then require an ADMIN token instead of disappearing into the
+     * general authenticated rule.
+     */
+    private static final String[] OPENAPI_ENDPOINTS = {
             "/v3/api-docs",
             "/v3/api-docs/**",
             "/swagger-ui.html",
-            "/swagger-ui/**",
-            "/error"
+            "/swagger-ui/**"
     };
+
+    private static final String OPENAPI_PUBLIC_PROPERTY = "app.openapi.public";
 
     /**
      * Read-only health probes that platforms (Render, Docker, load balancers) must
@@ -93,10 +105,12 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(HttpSecurity http, JwtService jwtService,
             CustomUserDetailsService userDetailsService, ObjectMapper objectMapper,
-            AuditLogService auditLogService, UserRepository userRepository) throws Exception {
+            AuditLogService auditLogService, UserRepository userRepository,
+            Environment environment) throws Exception {
         JwtAuthenticationFilter jwtAuthenticationFilter =
                 new JwtAuthenticationFilter(jwtService, userDetailsService, objectMapper);
         AdminAuditLogFilter adminAuditLogFilter = new AdminAuditLogFilter(auditLogService, userRepository);
+        boolean openApiPublic = environment.getProperty(OPENAPI_PUBLIC_PROPERTY, Boolean.class, true);
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(Customizer.withDefaults())
@@ -104,33 +118,42 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
-                .authorizeHttpRequests(requests -> requests
-                        // Public probes are matched first, before the admin-only actuator rules.
-                        // HEAD is included because some platform health checks probe with HEAD.
-                        .requestMatchers(HttpMethod.GET, PUBLIC_HEALTH_ENDPOINTS).permitAll()
-                        .requestMatchers(HttpMethod.HEAD, PUBLIC_HEALTH_ENDPOINTS).permitAll()
-                        // Detailed health, info and metrics stay admin-only. Every other
-                        // actuator endpoint (env, beans, configprops, heapdump, loggers,
-                        // shutdown, ...) is denied for every caller.
-                        .requestMatchers(new AndRequestMatcher(
-                                request -> HttpMethod.GET.matches(request.getMethod()),
-                                EndpointRequest.to("health", "info", "metrics")))
-                                .hasRole("ADMIN")
-                        .requestMatchers(EndpointRequest.toAnyEndpoint()).denyAll()
-                        .requestMatchers("/actuator", "/actuator/**").denyAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/games/*/player/verify")
-                                .authenticated()
-                        .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
-                        .requestMatchers(HttpMethod.POST, "/api/v1/admin/fulfillments/*/retry")
-                                .hasRole("ADMIN")
-                        .requestMatchers("/api/v1/admin/fulfillments/**")
-                                .hasAnyRole("ADMIN", "SUPPORT")
-                        .requestMatchers(HttpMethod.POST, "/api/v1/admin/payments/*/refunds")
-                                .hasRole("ADMIN")
-                        .requestMatchers(HttpMethod.GET, "/api/v1/admin/refunds", "/api/v1/admin/refunds/**")
-                                .hasAnyRole("ADMIN", "SUPPORT")
-                        .requestMatchers(ADMIN_PATTERN).hasRole("ADMIN")
-                        .anyRequest().authenticated())
+                .authorizeHttpRequests(requests -> {
+                    // Public probes are matched first, before the admin-only actuator rules.
+                    // HEAD is included because some platform health checks probe with HEAD.
+                    requests.requestMatchers(HttpMethod.GET, PUBLIC_HEALTH_ENDPOINTS).permitAll();
+                    requests.requestMatchers(HttpMethod.HEAD, PUBLIC_HEALTH_ENDPOINTS).permitAll();
+                    // Swagger UI/OpenAPI stay public for local development only; production
+                    // sets app.openapi.public=false so the docs require an ADMIN token.
+                    if (openApiPublic) {
+                        requests.requestMatchers(OPENAPI_ENDPOINTS).permitAll();
+                    } else {
+                        requests.requestMatchers(OPENAPI_ENDPOINTS).hasRole("ADMIN");
+                    }
+                    requests
+                            // Detailed health, info and metrics stay admin-only. Every other
+                            // actuator endpoint (env, beans, configprops, heapdump, loggers,
+                            // shutdown, ...) is denied for every caller.
+                            .requestMatchers(new AndRequestMatcher(
+                                    request -> HttpMethod.GET.matches(request.getMethod()),
+                                    EndpointRequest.to("health", "info", "metrics")))
+                                    .hasRole("ADMIN")
+                            .requestMatchers(EndpointRequest.toAnyEndpoint()).denyAll()
+                            .requestMatchers("/actuator", "/actuator/**").denyAll()
+                            .requestMatchers(HttpMethod.POST, "/api/v1/games/*/player/verify")
+                                    .authenticated()
+                            .requestMatchers(PUBLIC_ENDPOINTS).permitAll()
+                            .requestMatchers(HttpMethod.POST, "/api/v1/admin/fulfillments/*/retry")
+                                    .hasRole("ADMIN")
+                            .requestMatchers("/api/v1/admin/fulfillments/**")
+                                    .hasAnyRole("ADMIN", "SUPPORT")
+                            .requestMatchers(HttpMethod.POST, "/api/v1/admin/payments/*/refunds")
+                                    .hasRole("ADMIN")
+                            .requestMatchers(HttpMethod.GET, "/api/v1/admin/refunds", "/api/v1/admin/refunds/**")
+                                    .hasAnyRole("ADMIN", "SUPPORT")
+                            .requestMatchers(ADMIN_PATTERN).hasRole("ADMIN")
+                            .anyRequest().authenticated();
+                })
                 .exceptionHandling(exceptions -> exceptions
                         .authenticationEntryPoint(authenticationEntryPoint(objectMapper))
                         .accessDeniedHandler(accessDeniedHandler(objectMapper)))

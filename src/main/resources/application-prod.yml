@@ -79,6 +79,10 @@ app:
     # Mock payment confirmation and mock delivery routes must never exist in
     # production, even if an environment variable is set incorrectly.
     enabled: false
+  openapi:
+    # Production docs are opt-in and, when enabled, require an ADMIN JWT
+    # (enforced in SecurityConfig). Keep this false unless genuinely needed.
+    public: false
   cors:
     # Allowed storefront origins: defaults to Cloudflare Workers frontend, overridable by APP_CORS_ALLOWED_ORIGINS
     allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:https://gametopupkh.cheavsaren65.workers.dev}
@@ -112,11 +116,13 @@ player:
     mock-enabled: false
 
 springdoc:
+  # Disabled by default: a missing /v3/api-docs or Swagger UI resource is
+  # expected. Set SPRINGDOC_ENABLED=true to publish them for ADMIN users only.
   swagger-ui:
-    enabled: false
+    enabled: ${SPRINGDOC_ENABLED:false}
     path: /swagger-ui.html
   api-docs:
-    enabled: false
+    enabled: ${SPRINGDOC_ENABLED:false}
 
 logging:
   level:
