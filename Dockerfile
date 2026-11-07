@@ -33,8 +33,19 @@ EXPOSE 8082
 # The image runs the production profile by default, so a platform that does not
 # set a profile can never boot into `dev` (which enables mock mutation routes).
 # Any explicit SPRING_PROFILES_ACTIVE passed by the platform still wins.
+#
+# Java networking:
+#   -Djava.net.preferIPv4Stack=true forces Tomcat to bind an IPv4 socket on
+#   0.0.0.0. Without it the JVM may create the dual-stack IPv6 wildcard (::),
+#   which Render's port scanner does not detect ("Port scan timeout reached,
+#   no open ports detected"). Render only supports IPv4.
+#
+# Startup time:
+#   -XX:TieredStopAtLevel=1 (C1-only) roughly halves JVM/Spring startup on the
+#   0.1-CPU Render Free instance, keeping boot inside the port-scan window.
+#   Remove it if you move to a paid compute plan and want peak JIT throughput.
 ENV SPRING_PROFILES_ACTIVE=prod \
-    JAVA_TOOL_OPTIONS="-XX:+UseSerialGC -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError" \
+    JAVA_TOOL_OPTIONS="-Djava.net.preferIPv4Stack=true -XX:TieredStopAtLevel=1 -XX:+UseSerialGC -XX:MaxRAMPercentage=50.0 -XX:+ExitOnOutOfMemoryError" \
     TZ=UTC
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
