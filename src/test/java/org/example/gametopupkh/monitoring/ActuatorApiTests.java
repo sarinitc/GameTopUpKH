@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.HttpHeaders;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -29,6 +30,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -57,6 +59,43 @@ class ActuatorApiTests {
                 .andExpect(jsonPath("$.status").value("UP"))
                 .andExpect(jsonPath("$.components").doesNotExist())
                 .andExpect(jsonPath("$.details").doesNotExist());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/actuator/health", "/actuator/health/liveness", "/actuator/health/readiness"})
+    void healthProbesArePublicOverRealHttpWithoutCredentials(String path) throws Exception {
+        HttpResponse<String> response = httpGet(path);
+
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("\"status\":\"UP\"")
+                .doesNotContain("components", "details", "jdbc", "password");
+    }
+
+    @Test
+    void headHealthProbeIsPublic() throws Exception {
+        mvc.perform(head("/actuator/health")).andExpect(status().isOk());
+    }
+
+    @Test
+    void nonBearerAuthorizationHeaderDoesNotBlockPublicHealth() throws Exception {
+        mvc.perform(get("/actuator/health").header(HttpHeaders.AUTHORIZATION, "Basic dXNlcjpwYXNz"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"/actuator", "/actuator/unknown", "/actuator/env", "/actuator/configprops",
+            "/actuator/beans", "/actuator/heapdump", "/actuator/loggers", "/actuator/shutdown"})
+    void anonymousCallersCannotReachSensitiveOrUnknownActuatorEndpoints(String path) throws Exception {
+        mvc.perform(get(path)).andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
+
+    @Test
+    void protectedApiStillRejectsAnonymousRequests() throws Exception {
+        mvc.perform(get("/api/v1/admin/suppliers"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
     }
 
     @ParameterizedTest
@@ -101,10 +140,7 @@ class ActuatorApiTests {
 
     @Test
     void adminCanReadRuntimeAndHttpMetrics() throws Exception {
-        HttpResponse<String> response = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build().send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/actuator/health"))
-                        .timeout(Duration.ofSeconds(5)).GET().build(),
-                HttpResponse.BodyHandlers.ofString());
+        HttpResponse<String> response = httpGet("/actuator/health");
         assertThat(response.statusCode()).isEqualTo(200);
 
         mvc.perform(get("/actuator/metrics").with(user("admin").roles("ADMIN")))
@@ -157,5 +193,12 @@ class ActuatorApiTests {
         mvc.perform(get("/actuator/health").header("Authorization", "Bearer invalid-test-token"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+    }
+
+    private HttpResponse<String> httpGet(String path) throws Exception {
+        return HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build().send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
+                        .timeout(Duration.ofSeconds(5)).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 }

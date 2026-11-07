@@ -281,6 +281,32 @@ class BakongVerificationServiceTests {
     }
 
     @Test
+    @DisplayName("Bakong numeric currency code (840) is accepted as USD")
+    void numericCurrencyCodeIsAccepted() {
+        String txHash = "hash-" + UUID.randomUUID();
+        BakongTransactionData data = new BakongTransactionData(
+                txHash,
+                "customer@devb",
+                "merchant@bank",
+                "840",
+                new BigDecimal("4.25"),
+                "Order description",
+                System.currentTimeMillis(),
+                System.currentTimeMillis(),
+                "EXT-004B"
+        );
+        when(apiClient.checkTransaction(payment.getQrMd5()))
+                .thenReturn(new BakongCheckTransactionResponse(0, "Success", data));
+
+        PaymentStatusResponse response = verificationService.verifyPayment(payment.getId(), customer.getId());
+
+        assertThat(response.status()).isEqualTo(PaymentStatus.COMPLETED);
+        Order updatedOrder = orders.findById(order.getId()).orElseThrow();
+        assertThat(updatedOrder.getStatus()).isEqualTo(OrderStatus.PAID);
+        verify(fulfillmentService, times(1)).fulfillOrder(order.getId());
+    }
+
+    @Test
     @DisplayName("Recipient account mismatch marks payment and order as NEEDS_REVIEW without fulfilling")
     void recipientAccountMismatchRequiresReview() {
         String txHash = "hash-" + UUID.randomUUID();
@@ -294,6 +320,33 @@ class BakongVerificationServiceTests {
                 System.currentTimeMillis(),
                 System.currentTimeMillis(),
                 "EXT-005"
+        );
+        when(apiClient.checkTransaction(payment.getQrMd5()))
+                .thenReturn(new BakongCheckTransactionResponse(0, "Success", data));
+
+        PaymentStatusResponse response = verificationService.verifyPayment(payment.getId(), customer.getId());
+
+        assertThat(response.status()).isEqualTo(PaymentStatus.NEEDS_REVIEW);
+        Order updatedOrder = orders.findById(order.getId()).orElseThrow();
+        assertThat(updatedOrder.getStatus()).isEqualTo(OrderStatus.NEEDS_REVIEW);
+
+        verify(fulfillmentService, never()).fulfillOrder(any());
+    }
+
+    @Test
+    @DisplayName("Missing recipient account in provider response is rejected (fail closed)")
+    void missingRecipientAccountRequiresReview() {
+        String txHash = "hash-" + UUID.randomUUID();
+        BakongTransactionData data = new BakongTransactionData(
+                txHash,
+                "customer@devb",
+                null, // Bakong returned no receiving account
+                "USD",
+                new BigDecimal("4.25"),
+                "Order description",
+                System.currentTimeMillis(),
+                System.currentTimeMillis(),
+                "EXT-005B"
         );
         when(apiClient.checkTransaction(payment.getQrMd5()))
                 .thenReturn(new BakongCheckTransactionResponse(0, "Success", data));

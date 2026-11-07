@@ -6,6 +6,8 @@ import java.util.Locale;
 import java.util.Set;
 
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -18,9 +20,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class BakongProperties {
 
+    private static final Logger log = LoggerFactory.getLogger(BakongProperties.class);
+
     public static final String DEFAULT_BASE_URL = "https://api-bakong.nbc.gov.kh";
     public static final String DEFAULT_SANDBOX_BASE_URL = "https://sit-api-bakong.nbc.org.kh";
     public static final String CHECK_TRANSACTION_PATH = "/v1/check_transaction_by_md5";
+    public static final String CHECK_ACCOUNT_PATH = "/v1/check_bakong_account";
 
     private static final Set<String> APPROVED_PRODUCTION_DOMAINS = Set.of(
             "api-bakong.nbc.gov.kh",
@@ -34,7 +39,9 @@ public class BakongProperties {
             "127.0.0.1",
             "example.com",
             "example.test",
-            "api-test.nbc.gov.kh"
+            "api-test.nbc.gov.kh",
+            "sit-api-bakong.nbc.org.kh",
+            "sit-bakong.nbc.org.kh"
     );
 
     private final String environment;
@@ -52,9 +59,9 @@ public class BakongProperties {
     @Autowired
     public BakongProperties(
             @Value("${payment.bakong.environment:production}") String environment,
-            @Value("${payment.bakong.enabled:false}") String enabled,
-            @Value("${payment.bakong.base-url:https://api-bakong.nbc.gov.kh}") String baseUrl,
-            @Value("${payment.bakong.api-token:}") String apiToken,
+            @Value("${bakong.live.enabled:${payment.bakong.enabled:false}}") String enabled,
+            @Value("${payment.bakong.base-url:}") String baseUrl,
+            @Value("${bakong.token:${payment.bakong.api-token:${BAKONG_TOKEN:${BAKONG_API_TOKEN:}}}}") String apiToken,
             @Value("${payment.bakong.account-id:}") String accountId,
             @Value("${payment.bakong.merchant-name:GameTopUp-KH}") String merchantName,
             @Value("${payment.bakong.merchant-city:Phnom Penh}") String merchantCity,
@@ -80,7 +87,7 @@ public class BakongProperties {
             int maxRetries) {
         this.environment = environment == null ? "production" : environment.trim().toLowerCase(Locale.ROOT);
         this.enabled = enabled;
-        this.baseUrl = baseUrl == null ? DEFAULT_BASE_URL : baseUrl.trim();
+        this.baseUrl = resolveBaseUrl(baseUrl, this.environment);
         this.apiToken = apiToken == null ? "" : apiToken.trim();
         this.accountId = accountId == null ? "" : accountId.trim();
         this.merchantName = merchantName == null ? "GameTopUp-KH" : merchantName.trim();
@@ -100,6 +107,17 @@ public class BakongProperties {
         return "true".equals(trimmed) || "1".equals(trimmed) || "yes".equals(trimmed) || "on".equals(trimmed);
     }
 
+    private static String resolveBaseUrl(String configured, String environment) {
+        if (configured != null && !configured.isBlank()) {
+            return configured.trim();
+        }
+        return isProductionEnvironment(environment) ? DEFAULT_BASE_URL : DEFAULT_SANDBOX_BASE_URL;
+    }
+
+    private static boolean isProductionEnvironment(String environment) {
+        return "production".equalsIgnoreCase(environment) || "prod".equalsIgnoreCase(environment);
+    }
+
     public BakongProperties(String baseUrl, String apiToken, String accountId, String merchantName) {
         this("production", false, baseUrl, apiToken, accountId, merchantName, "Phnom Penh",
                 10, Duration.ofSeconds(5), Duration.ofSeconds(15), 2);
@@ -108,26 +126,27 @@ public class BakongProperties {
     @PostConstruct
     public void validateConfiguration() {
         if (enabled) {
+            if (apiToken.isBlank() || isPlaceholderToken(apiToken)) {
+                log.warn("===============================================================================");
+                log.warn("WARNING: Bakong live payment mode is enabled, but the API token is missing or placeholder!");
+                log.warn("Please configure BAKONG_TOKEN (or BAKONG_API_TOKEN) with a valid bearer token.");
+                log.warn("Dynamic KHQR generation will proceed offline, but online payment verification");
+                log.warn("and account checking via Bakong Open API will fail until a valid token is set.");
+                log.warn("===============================================================================");
+            }
             if (isProduction()) {
-                if (apiToken.isBlank() || isPlaceholderToken(apiToken)) {
-                    throw new IllegalStateException("BAKONG_API_TOKEN must be configured with a valid token when Bakong payments are enabled.");
-                }
                 if (accountId.isBlank()) {
-                    throw new IllegalStateException("BAKONG_ACCOUNT_ID must be configured when Bakong payments are enabled.");
-                }
-                if (merchantName.isBlank()) {
-                    throw new IllegalStateException("BAKONG_MERCHANT_NAME must be configured when Bakong payments are enabled.");
+                    log.warn("Bakong live payment mode is enabled, but BAKONG_ACCOUNT_ID is not configured. KHQR generation requires a valid merchant account ID.");
                 }
                 validateApprovedDomain(baseUrl);
-            } else {
-                if (apiToken.isBlank() || isPlaceholderToken(apiToken)) {
-                    throw new IllegalStateException("payment.bakong.api-token must be configured when Bakong payments are enabled.");
-                }
             }
         }
     }
 
     private boolean isPlaceholderToken(String token) {
+        if (token == null || token.isBlank()) {
+            return false;
+        }
         String lower = token.toLowerCase(Locale.ROOT);
         return lower.contains("placeholder") || lower.contains("change_me") || lower.contains("your_token");
     }
@@ -157,7 +176,7 @@ public class BakongProperties {
     }
 
     public boolean isProduction() {
-        return "production".equalsIgnoreCase(environment) || "prod".equalsIgnoreCase(environment);
+        return isProductionEnvironment(environment);
     }
 
     public boolean isSandbox() {

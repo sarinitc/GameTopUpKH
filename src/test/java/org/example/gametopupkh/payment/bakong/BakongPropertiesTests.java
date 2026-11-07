@@ -36,4 +36,76 @@ class BakongPropertiesTests {
     void validTrueValuesResolveToEnabled(String input) {
         assertThat(BakongProperties.parseBooleanLenient(input)).isTrue();
     }
+
+    @Test
+    void sandboxEnvironmentDefaultsToSitBaseUrlWhenBaseUrlIsMissing() {
+        BakongProperties props = new BakongProperties(
+                "sandbox", false, "", "token", "acc@bank",
+                "GameTopUp-KH", "Phnom Penh", 10,
+                Duration.ofSeconds(5), Duration.ofSeconds(15), 2);
+
+        assertThat(props.baseUrl()).isEqualTo(BakongProperties.DEFAULT_SANDBOX_BASE_URL);
+        assertThat(props.isSandbox()).isTrue();
+    }
+
+    @Test
+    void productionEnvironmentDefaultsToProductionBaseUrlWhenBaseUrlIsMissing() {
+        BakongProperties props = new BakongProperties(
+                "production", false, "", "token", "acc@bank",
+                "GameTopUp-KH", "Phnom Penh", 10,
+                Duration.ofSeconds(5), Duration.ofSeconds(15), 2);
+
+        assertThat(props.baseUrl()).isEqualTo(BakongProperties.DEFAULT_BASE_URL);
+        assertThat(props.isProduction()).isTrue();
+    }
+
+    @Test
+    void explicitBaseUrlIsPreserved() {
+        BakongProperties props = new BakongProperties(
+                "sandbox", false, "https://example.com", "token", "acc@bank",
+                "GameTopUp-KH", "Phnom Penh", 10,
+                Duration.ofSeconds(5), Duration.ofSeconds(15), 2);
+
+        assertThat(props.baseUrl()).isEqualTo("https://example.com");
+    }
+
+    @Test
+    void enabledWithMissingTokenLogsWarningAndDoesNotCrashStartup() {
+        BakongProperties props = new BakongProperties(
+                "production",
+                true,
+                "https://api-bakong.nbc.gov.kh",
+                "", // missing token
+                "merchant@bank",
+                "GameTopUp-KH",
+                "Phnom Penh",
+                10,
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(15),
+                2);
+
+        assertThat(props.isEnabled()).isTrue();
+        assertThat(props.apiToken()).isEmpty();
+    }
+
+    @Test
+    void enabledWithValidConfigInitializesCorrectly() {
+        BakongProperties props = new BakongProperties(
+                "production",
+                true,
+                "https://api-bakong.nbc.gov.kh",
+                "live-jwt-token",
+                "merchant@bank",
+                "GameTopUp-KH",
+                "Phnom Penh",
+                10,
+                Duration.ofSeconds(5),
+                Duration.ofSeconds(15),
+                2);
+
+        assertThat(props.isEnabled()).isTrue();
+        assertThat(props.apiToken()).isEqualTo("live-jwt-token");
+        assertThat(props.accountId()).isEqualTo("merchant@bank");
+        assertThat(props.baseUrl()).isEqualTo("https://api-bakong.nbc.gov.kh");
+    }
 }

@@ -18,6 +18,9 @@ management:
       max-permitted: read-only
     web:
       exposure:
+        # health is the only endpoint required by the platform health check.
+        # info and metrics are additionally exposed but require an ADMIN token
+        # in SecurityConfig.
         include: health,info,metrics
     jmx:
       exposure:
@@ -25,12 +28,18 @@ management:
   endpoint:
     health:
       access: read-only
+      # Anonymous callers only receive {"status":"UP|DOWN"} (never details such
+      # as the JDBC URL or credentials). Component details require an ADMIN.
       show-details: when-authorized
       show-components: when-authorized
       roles: ADMIN
       probes:
         enabled: true
       group:
+        liveness:
+          # Liveness must not depend on the database, so a Neon outage cannot
+          # make the platform restart an otherwise healthy process.
+          include: livenessState
         readiness:
           include: readinessState,db
     info:
@@ -100,9 +109,9 @@ payment:
     max-retries: ${ABA_PAYWAY_MAX_RETRIES:2}
   bakong:
     environment: ${BAKONG_ENVIRONMENT:production}
-    enabled: ${BAKONG_PAYMENT_ENABLED:false}
-    base-url: ${BAKONG_BASE_URL:https://api-bakong.nbc.gov.kh}
-    api-token: ${BAKONG_API_TOKEN:}
+    enabled: ${BAKONG_LIVE_ENABLED:${BAKONG_PAYMENT_ENABLED:false}}
+    base-url: ${BAKONG_BASE_URL:}
+    api-token: ${BAKONG_TOKEN:${BAKONG_API_TOKEN:}}
     account-id: ${BAKONG_ACCOUNT_ID:}
     merchant-name: ${BAKONG_MERCHANT_NAME:GameTopUp-KH}
     merchant-city: ${BAKONG_MERCHANT_CITY:Phnom Penh}

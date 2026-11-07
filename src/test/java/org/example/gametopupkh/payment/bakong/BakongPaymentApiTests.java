@@ -16,6 +16,7 @@ import org.example.gametopupkh.order.OrderResponse;
 import org.example.gametopupkh.order.OrderService;
 import org.example.gametopupkh.order.OrderStatus;
 import org.example.gametopupkh.payment.PaymentRepository;
+import org.example.gametopupkh.payment.bakong.dto.BakongCheckAccountResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse.BakongTransactionData;
 import org.example.gametopupkh.security.JwtService;
@@ -37,6 +38,7 @@ import org.springframework.transaction.PlatformTransactionManager;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.matchesPattern;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -52,7 +54,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
         "spring.jpa.hibernate.ddl-auto=create-drop", "spring.flyway.enabled=false",
         "app.jwt.secret=bakong-api-test-secret-at-least-thirty-two-bytes",
         "payment.gateway=mock", "supplier.client=mock", "fulfillment.worker.enabled=false",
-        "payment.reconcile.cooldown=PT0S"
+        "payment.reconcile.cooldown=PT0S",
+        "payment.bakong.environment=sandbox",
+        "payment.bakong.base-url=https://sit-api-bakong.nbc.org.kh",
+        "payment.bakong.account-id=merchant@bank"
 })
 @AutoConfigureMockMvc
 class BakongPaymentApiTests {
@@ -147,7 +152,7 @@ class BakongPaymentApiTests {
         BakongTransactionData data = new BakongTransactionData(
                 txHash,
                 "customer@devb",
-                "gametopup@bakong",
+                "merchant@bank",
                 "USD",
                 new BigDecimal("4.25"),
                 "Order",
@@ -165,6 +170,34 @@ class BakongPaymentApiTests {
                 .andExpect(jsonPath("$.data.gatewayReference").value(txHash));
 
         verify(fulfillmentService).fulfillOrder(orderId);
+    }
+
+    @Test
+    @DisplayName("Admin can verify the configured Bakong merchant account")
+    void adminCanVerifyMerchantAccount() throws Exception {
+        UUID adminId = createUser("ADMIN");
+        when(apiClient.checkAccount("merchant@bank"))
+                .thenReturn(new BakongCheckAccountResponse(0, "Success",
+                        java.util.Map.of("accountId", "merchant@bank")));
+
+        mockMvc.perform(get("/api/v1/admin/payments/bakong/account")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(adminId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.accountId").value("merchant@bank"))
+                .andExpect(jsonPath("$.data.verified").value(true))
+                .andExpect(jsonPath("$.data.responseCode").value(0));
+
+        verify(apiClient).checkAccount("merchant@bank");
+    }
+
+    @Test
+    @DisplayName("Customers cannot run the admin Bakong account verification")
+    void customerCannotVerifyMerchantAccount() throws Exception {
+        mockMvc.perform(get("/api/v1/admin/payments/bakong/account")
+                        .header(HttpHeaders.AUTHORIZATION, bearer(customerId)))
+                .andExpect(status().isForbidden());
+
+        verify(apiClient, never()).checkAccount(any());
     }
 
     private static final String PASSWORD = "secret123";

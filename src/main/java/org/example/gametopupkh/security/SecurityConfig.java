@@ -53,6 +53,17 @@ public class SecurityConfig {
             "/error"
     };
 
+    /**
+     * Read-only health probes that platforms (Render, Docker, load balancers) must
+     * reach without a JWT. Keep this list narrow: component endpoints such as
+     * /actuator/health/db stay behind the ADMIN rule below.
+     */
+    private static final String[] PUBLIC_HEALTH_ENDPOINTS = {
+            "/actuator/health",
+            "/actuator/health/liveness",
+            "/actuator/health/readiness"
+    };
+
     private static final String ADMIN_PATTERN = "/api/v1/admin/**";
 
     @Bean
@@ -94,8 +105,13 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .logout(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(requests -> requests
-                        .requestMatchers(HttpMethod.GET, "/actuator/health", "/actuator/health/liveness",
-                                "/actuator/health/readiness").permitAll()
+                        // Public probes are matched first, before the admin-only actuator rules.
+                        // HEAD is included because some platform health checks probe with HEAD.
+                        .requestMatchers(HttpMethod.GET, PUBLIC_HEALTH_ENDPOINTS).permitAll()
+                        .requestMatchers(HttpMethod.HEAD, PUBLIC_HEALTH_ENDPOINTS).permitAll()
+                        // Detailed health, info and metrics stay admin-only. Every other
+                        // actuator endpoint (env, beans, configprops, heapdump, loggers,
+                        // shutdown, ...) is denied for every caller.
                         .requestMatchers(new AndRequestMatcher(
                                 request -> HttpMethod.GET.matches(request.getMethod()),
                                 EndpointRequest.to("health", "info", "metrics")))

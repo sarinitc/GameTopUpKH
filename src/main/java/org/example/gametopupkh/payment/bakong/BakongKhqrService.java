@@ -1,7 +1,6 @@
 package org.example.gametopupkh.payment.bakong;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -9,14 +8,25 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
 
+import kh.gov.nbc.bakong_khqr.BakongKHQR;
+import kh.gov.nbc.bakong_khqr.model.CRCValidation;
+import kh.gov.nbc.bakong_khqr.model.IndividualInfo;
+import kh.gov.nbc.bakong_khqr.model.KHQRCurrency;
+import kh.gov.nbc.bakong_khqr.model.KHQRData;
+import kh.gov.nbc.bakong_khqr.model.KHQRDecodeData;
+import kh.gov.nbc.bakong_khqr.model.KHQRResponse;
+import kh.gov.nbc.bakong_khqr.model.KHQRStatus;
 import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.payment.bakong.dto.BakongKhqrResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
- * Generates dynamic KHQR conforming to EMVCo Merchant-Presented Mode (MPM)
- * and the National Bank of Cambodia (NBC) Bakong standard.
+ * Generates dynamic KHQR codes with the official National Bank of Cambodia
+ * {@code kh.gov.nbc.bakong_khqr:sdk-java} library, then decodes the result and
+ * checks the account, amount, currency, expiry and checksum before returning it
+ * to a customer. This fail-closed self-check protects the order flow from SDK
+ * changes, floating-point conversion mistakes and configuration drift.
  */
 @Service
 public class BakongKhqrService {
@@ -26,6 +36,7 @@ public class BakongKhqrService {
     public static final String DEFAULT_MCC = "5999"; // Miscellaneous Retail
     public static final String COUNTRY_CODE_KH = "KH";
     public static final int MAX_LIFETIME_MINUTES = 10;
+    public static final String DYNAMIC_POINT_OF_INITIATION = "12";
 
     private final BakongProperties properties;
 
@@ -35,6 +46,8 @@ public class BakongKhqrService {
 
     /**
      * Generates a dynamic KHQR string and its MD5 hash for the given order details.
+     * The official SDK emits the EMVCo TLV payload, CRC-16 checksum and RFU
+     * creation/expiry timestamps; this method independently verifies the result.
      *
      * @param amount           exact monetary amount
      * @param currency         ISO currency code ("USD" or "KHR")
@@ -42,6 +55,72 @@ public class BakongKhqrService {
      * @return payload containing KHQR string, MD5 hash, expiration, amount, and currency
      */
     public BakongKhqrResponse generateDynamicKhqr(BigDecimal amount, String currency, String paymentReference) {
+        validateRequest(amount, currency, paymentReference);
+        ensureGenerationAllowed();
+
+        String normalizedCurrency = currency.trim().toUpperCase(Locale.ROOT);
+        KHQRCurrency sdkCurrency = resolveCurrency(normalizedCurrency);
+        String expectedCurrencyCode = currencyCode(normalizedCurrency);
+
+        String accountId = properties.accountId();
+        if (accountId == null || accountId.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "BAKONG_ACCOUNT_ID_MISSING",
+                    "A Bakong merchant account ID must be configured before generating a KHQR");
+        }
+
+        String merchantName = sanitize(properties.merchantName(), 25, "GameTopUp-KH");
+        String merchantCity = sanitize(properties.merchantCity(), 15, "Phnom Penh");
+        String billNumber = sanitize(paymentReference.trim(), 25, paymentReference.trim());
+
+        int lifetimeMinutes = Math.min(properties.lifetimeMinutes(), MAX_LIFETIME_MINUTES);
+        Instant expiresAt = Instant.now().plus(Duration.ofMinutes(lifetimeMinutes));
+
+        IndividualInfo individualInfo = new IndividualInfo();
+        individualInfo.setBakongAccountId(accountId.trim());
+        individualInfo.setCurrency(sdkCurrency);
+        individualInfo.setAmount(toSdkAmount(amount, normalizedCurrency));
+        individualInfo.setMerchantName(merchantName);
+        individualInfo.setMerchantCity(merchantCity);
+        individualInfo.setMerchantCategoryCode(DEFAULT_MCC);
+        individualInfo.setBillNumber(billNumber);
+        individualInfo.setExpirationTimestamp(expiresAt.toEpochMilli());
+
+        KHQRResponse<KHQRData> sdkResponse;
+        try {
+            sdkResponse = BakongKHQR.generateIndividual(individualInfo);
+        } catch (RuntimeException e) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "KHQR_GENERATION_FAILED",
+                    "The official KHQR SDK could not generate a code: " + e.getMessage(), e);
+        }
+
+        KHQRData data = requireSdkSuccess(sdkResponse, HttpStatus.BAD_REQUEST,
+                "KHQR_GENERATION_FAILED", "generation");
+        String finalKhqr = data.getQr();
+        if (finalKhqr == null || finalKhqr.isBlank()) {
+            throw new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "KHQR_SELF_CHECK_FAILED",
+                    "The official KHQR SDK returned an empty QR payload");
+        }
+
+        validateIssuedQr(finalKhqr, amount, expectedCurrencyCode, accountId.trim(), billNumber, expiresAt);
+
+        return new BakongKhqrResponse(
+                finalKhqr,
+                calculateMd5(finalKhqr),
+                amount,
+                normalizedCurrency,
+                expiresAt,
+                paymentReference
+        );
+    }
+
+    private void ensureGenerationAllowed() {
+        if (properties.isProduction() && !properties.isEnabled()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "BAKONG_PAYMENT_DISABLED",
+                    "Live Bakong payments are disabled by configuration");
+        }
+    }
+
+    private static void validateRequest(BigDecimal amount, String currency, String paymentReference) {
         if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_AMOUNT", "Payment amount must be greater than zero");
         }
@@ -51,75 +130,38 @@ public class BakongKhqrService {
         if (paymentReference == null || paymentReference.isBlank()) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_REFERENCE", "Payment reference is required");
         }
-
-        String normalizedCurrency = currency.trim().toUpperCase(Locale.ROOT);
-        String currencyCode = resolveCurrencyCode(normalizedCurrency);
-        String formattedAmount = formatAmount(amount, normalizedCurrency);
-
-        String accountId = properties.hasAccountId() ? properties.accountId() : "gametopup@bakong";
-        String merchantName = sanitize(properties.merchantName(), 25, "GameTopUp-KH");
-        String merchantCity = sanitize(properties.merchantCity(), 15, "Phnom Penh");
-        String billNumber = sanitize(paymentReference, 25, paymentReference);
-
-        StringBuilder payload = new StringBuilder();
-
-        // 00: Payload Format Indicator (Version 01)
-        appendTlv(payload, "00", "01");
-
-        // 01: Point of Initiation Method (12 = Dynamic)
-        appendTlv(payload, "01", "12");
-
-        // 29: Merchant Account Information (Individual / Solo Merchant Account)
-        // Sub-tag 00: Bakong Account ID
-        StringBuilder tag29Value = new StringBuilder();
-        appendTlv(tag29Value, "00", accountId);
-        appendTlv(payload, "29", tag29Value.toString());
-
-        // 52: Merchant Category Code
-        appendTlv(payload, "52", DEFAULT_MCC);
-
-        // 53: Transaction Currency (840 = USD, 116 = KHR)
-        appendTlv(payload, "53", currencyCode);
-
-        // 54: Transaction Amount
-        appendTlv(payload, "54", formattedAmount);
-
-        // 58: Country Code (KH)
-        appendTlv(payload, "58", COUNTRY_CODE_KH);
-
-        // 59: Merchant Name
-        appendTlv(payload, "59", merchantName);
-
-        // 60: Merchant City
-        appendTlv(payload, "60", merchantCity);
-
-        // 62: Additional Data Field Template (Bill Number / Reference)
-        StringBuilder tag62Value = new StringBuilder();
-        appendTlv(tag62Value, "01", billNumber);
-        appendTlv(payload, "62", tag62Value.toString());
-
-        // 63: CRC-16 Checksum (Container tag 63, length 04)
-        payload.append("6304");
-        String crc = calculateCrc16(payload.toString());
-        payload.append(crc);
-
-        String finalKhqr = payload.toString();
-        String md5 = calculateMd5(finalKhqr);
-
-        int lifetimeMinutes = Math.min(properties.lifetimeMinutes(), MAX_LIFETIME_MINUTES);
-        Instant expiresAt = Instant.now().plus(Duration.ofMinutes(lifetimeMinutes));
-
-        return new BakongKhqrResponse(
-                finalKhqr,
-                md5,
-                amount,
-                normalizedCurrency,
-                expiresAt,
-                paymentReference
-        );
     }
 
-    private static String resolveCurrencyCode(String currency) {
+    /**
+     * The SDK exposes amounts as {@link Double}. The database keeps money as
+     * {@code NUMERIC(12,2)} and the caller passes a {@link BigDecimal}, so this
+     * boundary is limited to values the SDK can represent exactly at two decimals.
+     * The generated QR is decoded again before use to prove the amount survived.
+     */
+    private static Double toSdkAmount(BigDecimal amount, String currency) {
+        BigDecimal normalized = amount.stripTrailingZeros();
+        if ("KHR".equals(currency)) {
+            if (normalized.scale() > 0) {
+                throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_AMOUNT",
+                        "KHR Bakong payments must be whole riel because the KHQR specification does not allow KHR decimals");
+            }
+        } else if (normalized.scale() > 2) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_AMOUNT",
+                    "Bakong USD payments support at most two decimal places");
+        }
+        return amount.doubleValue();
+    }
+
+    private static KHQRCurrency resolveCurrency(String currency) {
+        return switch (currency) {
+            case "USD" -> KHQRCurrency.USD;
+            case "KHR" -> KHQRCurrency.KHR;
+            default -> throw new ApiException(HttpStatus.BAD_REQUEST, "CURRENCY_NOT_SUPPORTED",
+                    "Bakong KHQR only supports USD and KHR, but received " + currency);
+        };
+    }
+
+    private static String currencyCode(String currency) {
         return switch (currency) {
             case "USD" -> CURRENCY_USD_CODE;
             case "KHR" -> CURRENCY_KHR_CODE;
@@ -128,20 +170,65 @@ public class BakongKhqrService {
         };
     }
 
-    private static String formatAmount(BigDecimal amount, String currency) {
-        if ("KHR".equalsIgnoreCase(currency)) {
-            // KHR is typically an integer or 2 decimal places
-            return amount.stripTrailingZeros().scale() <= 0
-                    ? amount.setScale(0, RoundingMode.HALF_UP).toPlainString()
-                    : amount.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    private static void validateIssuedQr(String qr, BigDecimal amount, String expectedCurrencyCode,
+            String expectedAccountId, String expectedBillNumber, Instant expectedExpiresAt) {
+        KHQRResponse<CRCValidation> verifyResponse;
+        try {
+            verifyResponse = BakongKHQR.verify(qr);
+        } catch (RuntimeException e) {
+            throw selfCheckFailure("The official KHQR SDK could not verify the generated code", e);
         }
-        return amount.setScale(2, RoundingMode.HALF_UP).toPlainString();
+        if (verifyResponse == null || verifyResponse.getData() == null || !verifyResponse.getData().isValid()) {
+            throw selfCheckFailure("The generated KHQR has an invalid CRC-16 checksum", null);
+        }
+
+        KHQRResponse<KHQRDecodeData> decodeResponse;
+        try {
+            decodeResponse = BakongKHQR.decode(qr);
+        } catch (RuntimeException e) {
+            throw selfCheckFailure("The official KHQR SDK could not decode the generated code", e);
+        }
+        KHQRDecodeData decoded = requireSdkSuccess(decodeResponse, HttpStatus.INTERNAL_SERVER_ERROR,
+                "KHQR_SELF_CHECK_FAILED", "decoding");
+
+        if (!DYNAMIC_POINT_OF_INITIATION.equals(decoded.getPointOfInitiationMethod())) {
+            throw selfCheckFailure("The generated KHQR is not a dynamic code", null);
+        }
+        if (!expectedAccountId.equalsIgnoreCase(decoded.getBakongAccountID())) {
+            throw selfCheckFailure("The generated KHQR contains a different receiving account", null);
+        }
+        if (decoded.getTransactionAmount() == null
+                || new BigDecimal(decoded.getTransactionAmount()).compareTo(amount) != 0) {
+            throw selfCheckFailure("The generated KHQR contains a different amount", null);
+        }
+        if (!expectedCurrencyCode.equals(decoded.getTransactionCurrency())) {
+            throw selfCheckFailure("The generated KHQR contains a different currency", null);
+        }
+        if (!expectedBillNumber.equals(decoded.getBillNumber())) {
+            throw selfCheckFailure("The generated KHQR contains a different bill number", null);
+        }
+        if (!String.valueOf(expectedExpiresAt.toEpochMilli()).equals(decoded.getExpirationTimestamp())) {
+            throw selfCheckFailure("The generated KHQR contains a different expiration timestamp", null);
+        }
     }
 
-    private static void appendTlv(StringBuilder sb, String tag, String value) {
-        sb.append(tag);
-        sb.append(String.format("%02d", value.length()));
-        sb.append(value);
+    private static <T> T requireSdkSuccess(KHQRResponse<T> response, HttpStatus status,
+            String errorCode, String operation) {
+        KHQRStatus khqrStatus = response == null ? null : response.getKHQRStatus();
+        if (response == null || khqrStatus == null || khqrStatus.getCode() != 0 || response.getData() == null) {
+            Integer sdkErrorCode = khqrStatus == null ? null : khqrStatus.getErrorCode();
+            String sdkMessage = khqrStatus == null ? "no status returned" : khqrStatus.getMessage();
+            throw new ApiException(status, errorCode,
+                    "Official KHQR SDK " + operation + " failed"
+                            + (sdkErrorCode == null ? "" : " (error " + sdkErrorCode + ")")
+                            + ": " + sdkMessage);
+        }
+        return response.getData();
+    }
+
+    private static ApiException selfCheckFailure(String message, Exception cause) {
+        return new ApiException(HttpStatus.INTERNAL_SERVER_ERROR, "KHQR_SELF_CHECK_FAILED",
+                message + "; refusing to return the QR", cause);
     }
 
     private static String sanitize(String value, int maxLength, String fallback) {
@@ -153,28 +240,9 @@ public class BakongKhqrService {
     }
 
     /**
-     * Calculates the CRC16-CCITT/FALSE checksum over the given payload.
-     * Polynomial: 0x1021, Seed: 0xFFFF.
-     */
-    public static String calculateCrc16(String input) {
-        int crc = 0xFFFF;
-        int polynomial = 0x1021;
-        byte[] bytes = input.getBytes(StandardCharsets.UTF_8);
-        for (byte b : bytes) {
-            crc ^= ((b & 0xFF) << 8);
-            for (int i = 0; i < 8; i++) {
-                if ((crc & 0x8000) != 0) {
-                    crc = ((crc << 1) ^ polynomial) & 0xFFFF;
-                } else {
-                    crc = (crc << 1) & 0xFFFF;
-                }
-            }
-        }
-        return String.format("%04X", crc);
-    }
-
-    /**
-     * Calculates the MD5 hash (32 lowercase hex characters) of the given string.
+     * Calculates the MD5 hash (32 lowercase hex characters) of the complete KHQR
+     * UTF-8 string. Bakong's {@code check_transaction_by_md5} endpoint expects this
+     * value, and it is stored per payment for later verification.
      */
     public static String calculateMd5(String input) {
         try {

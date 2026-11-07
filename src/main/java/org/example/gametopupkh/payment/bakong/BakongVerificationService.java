@@ -4,6 +4,7 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -22,8 +23,11 @@ import org.example.gametopupkh.payment.PaymentProvider;
 import org.example.gametopupkh.payment.PaymentRepository;
 import org.example.gametopupkh.payment.PaymentStatus;
 import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
+import org.example.gametopupkh.payment.bakong.dto.BakongAccountVerificationResponse;
+import org.example.gametopupkh.payment.bakong.dto.BakongCheckAccountResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse.BakongTransactionData;
+import org.example.gametopupkh.payment.gateway.PaymentGateway.PaymentGatewayException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -89,6 +93,35 @@ public class BakongVerificationService {
         this.requiresNewTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
         this.joiningTransaction = new TransactionTemplate(transactionManager);
         this.joiningTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+    }
+
+    /**
+     * Verifies the configured merchant account with Bakong's
+     * {@code /v1/check_bakong_account} endpoint. This is a read-only diagnostic used
+     * by staff before enabling live payments; it never moves money.
+     *
+     * @return the provider's verification result for the configured account
+     */
+    public BakongAccountVerificationResponse verifyMerchantAccount() {
+        String accountId = properties.accountId();
+        if (accountId == null || accountId.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "BAKONG_ACCOUNT_ID_MISSING",
+                    "BAKONG_ACCOUNT_ID must be configured before verifying the merchant account");
+        }
+
+        BakongCheckAccountResponse response;
+        try {
+            response = apiClient.checkAccount(accountId);
+        } catch (PaymentGatewayException e) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "PAYMENT_PROVIDER_UNAVAILABLE",
+                    "The Bakong payment provider could not be reached: " + e.getMessage(), e);
+        }
+
+        return new BakongAccountVerificationResponse(
+                accountId,
+                response != null && response.isVerified(),
+                response == null ? null : response.responseCode(),
+                response == null ? null : response.responseMessage());
     }
 
     /**
@@ -210,6 +243,8 @@ public class BakongVerificationService {
             if (transactionHash == null || transactionHash.isBlank()) {
                 recordEvent(payment.getId(), EVENT_VERIFY_ERROR, null,
                         "Bakong reported success but returned empty transaction hash", actorUserId);
+                payment.setLastProviderCheckAt(now);
+                payment.setVerificationAttempts(payment.getVerificationAttempts() + 1);
                 payment.setStatus(PaymentStatus.NEEDS_REVIEW);
                 Payment saved = paymentRepository.save(payment);
                 markOrderNeedsReview(payment.getOrderId(), "Bakong returned empty transaction hash");
@@ -224,6 +259,8 @@ public class BakongVerificationService {
                         transactionHash, existingWithHash.get().getId());
                 recordEvent(payment.getId(), EVENT_REPLAY_ATTEMPT, transactionHash,
                         "Transaction hash already used by another payment: " + existingWithHash.get().getId(), actorUserId);
+                payment.setLastProviderCheckAt(now);
+                payment.setVerificationAttempts(payment.getVerificationAttempts() + 1);
                 payment.setStatus(PaymentStatus.NEEDS_REVIEW);
                 Payment saved = paymentRepository.save(payment);
                 markOrderNeedsReview(payment.getOrderId(), "Duplicate Bakong transaction hash detected");
@@ -236,36 +273,45 @@ public class BakongVerificationService {
                         payment.getId(), payment.getAmount(), data.amount());
                 recordEvent(payment.getId(), EVENT_AMOUNT_MISMATCH, transactionHash,
                         "Expected amount " + payment.getAmount() + " but Bakong returned " + data.amount(), actorUserId);
+                payment.setLastProviderCheckAt(now);
+                payment.setVerificationAttempts(payment.getVerificationAttempts() + 1);
                 payment.setStatus(PaymentStatus.NEEDS_REVIEW);
                 Payment saved = paymentRepository.save(payment);
                 markOrderNeedsReview(payment.getOrderId(), "Bakong payment amount mismatch");
                 return PaymentStatusResponse.from(saved);
             }
 
-            // 3. Currency Validation
-            if (data.currency() == null || !data.currency().equalsIgnoreCase(payment.getCurrency())) {
+            // 3. Currency Validation (accept ISO codes and Bakong numeric codes)
+            String actualCurrency = normalizeCurrency(data.currency());
+            if (actualCurrency == null || !actualCurrency.equalsIgnoreCase(payment.getCurrency())) {
                 log.warn("Currency mismatch for payment {}: expected {}, received {}",
                         payment.getId(), payment.getCurrency(), data.currency());
                 recordEvent(payment.getId(), EVENT_CURRENCY_MISMATCH, transactionHash,
                         "Expected currency " + payment.getCurrency() + " but Bakong returned " + data.currency(), actorUserId);
+                payment.setLastProviderCheckAt(now);
+                payment.setVerificationAttempts(payment.getVerificationAttempts() + 1);
                 payment.setStatus(PaymentStatus.NEEDS_REVIEW);
                 Payment saved = paymentRepository.save(payment);
                 markOrderNeedsReview(payment.getOrderId(), "Bakong payment currency mismatch");
                 return PaymentStatusResponse.from(saved);
             }
 
-            // 4. Recipient Account Validation
-            if (properties.hasAccountId() && data.toAccountId() != null && !data.toAccountId().isBlank()) {
-                if (!data.toAccountId().equalsIgnoreCase(properties.accountId())) {
-                    log.warn("Recipient account mismatch for payment {}: expected {}, received {}",
-                            payment.getId(), properties.accountId(), data.toAccountId());
-                    recordEvent(payment.getId(), EVENT_RECIPIENT_MISMATCH, transactionHash,
-                            "Expected recipient " + properties.accountId() + " but got " + data.toAccountId(), actorUserId);
-                    payment.setStatus(PaymentStatus.NEEDS_REVIEW);
-                    Payment saved = paymentRepository.save(payment);
-                    markOrderNeedsReview(payment.getOrderId(), "Bakong recipient account mismatch");
-                    return PaymentStatusResponse.from(saved);
-                }
+            // 4. Recipient Account Validation (fail closed: an unknown recipient is never accepted)
+            String expectedRecipient = properties.accountId();
+            String actualRecipient = data.toAccountId();
+            if (expectedRecipient == null || expectedRecipient.isBlank()
+                    || actualRecipient == null || actualRecipient.isBlank()
+                    || !actualRecipient.trim().equalsIgnoreCase(expectedRecipient.trim())) {
+                log.warn("Recipient account mismatch for payment {}: expected {}, received {}",
+                        payment.getId(), expectedRecipient, actualRecipient);
+                recordEvent(payment.getId(), EVENT_RECIPIENT_MISMATCH, transactionHash,
+                        "Expected recipient " + expectedRecipient + " but got " + actualRecipient, actorUserId);
+                payment.setLastProviderCheckAt(now);
+                payment.setVerificationAttempts(payment.getVerificationAttempts() + 1);
+                payment.setStatus(PaymentStatus.NEEDS_REVIEW);
+                Payment saved = paymentRepository.save(payment);
+                markOrderNeedsReview(payment.getOrderId(), "Bakong recipient account mismatch");
+                return PaymentStatusResponse.from(saved);
             }
 
             // All validations passed - mark payment COMPLETED and order PAID
@@ -363,6 +409,25 @@ public class BakongVerificationService {
                 ? joiningTransaction
                 : requiresNewTransaction;
         return template.execute(status -> work.get());
+    }
+
+    /**
+     * Bakong can report currency as an ISO code ("USD") or an EMVCo numeric code
+     * ("840"). Normalize both forms before comparing with the order currency.
+     */
+    private static String normalizeCurrency(String currency) {
+        if (currency == null) {
+            return null;
+        }
+        String trimmed = currency.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+        return switch (trimmed.toUpperCase(Locale.ROOT)) {
+            case "840", "USD" -> "USD";
+            case "116", "KHR" -> "KHR";
+            default -> trimmed;
+        };
     }
 
     private static String truncate(String value, int maxLength) {

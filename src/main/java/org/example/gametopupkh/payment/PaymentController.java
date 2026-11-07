@@ -6,6 +6,8 @@ import java.util.UUID;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.common.response.ApiResponse;
+import org.example.gametopupkh.payment.bakong.BakongVerificationService;
+import org.example.gametopupkh.payment.bakong.dto.BakongAccountVerificationResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongKhqrOrderRequest;
 import org.example.gametopupkh.payment.dto.CreatePaymentResponse;
 import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
@@ -28,9 +30,12 @@ public class PaymentController {
     private static final String ADMIN_AUTHORITY = "ROLE_ADMIN";
 
     private final PaymentService paymentService;
+    private final BakongVerificationService bakongVerificationService;
 
-    public PaymentController(PaymentService paymentService) {
+    public PaymentController(PaymentService paymentService,
+            BakongVerificationService bakongVerificationService) {
         this.paymentService = paymentService;
+        this.bakongVerificationService = bakongVerificationService;
     }
 
     @PostMapping("/api/v1/orders/{orderId}/payments/aba")
@@ -102,6 +107,15 @@ public class PaymentController {
     public ResponseEntity<ApiResponse<List<PaymentStatusResponse>>> listAll(
             @RequestParam(required = false) PaymentStatus status) {
         return ResponseEntity.ok(ApiResponse.ok(paymentService.findAll(status)));
+    }
+
+    /**
+     * Verifies that the configured Bakong merchant account exists before live
+     * payments are enabled. Read-only; protected by the admin route rule.
+     */
+    @GetMapping("/api/v1/admin/payments/bakong/account")
+    public ResponseEntity<ApiResponse<BakongAccountVerificationResponse>> verifyBakongMerchantAccount() {
+        return ResponseEntity.ok(ApiResponse.ok(bakongVerificationService.verifyMerchantAccount()));
     }
 
     @PostMapping("/api/v1/admin/payments/{paymentId}/reconcile")

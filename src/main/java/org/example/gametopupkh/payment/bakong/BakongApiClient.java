@@ -1,8 +1,10 @@
 package org.example.gametopupkh.payment.bakong;
 
-import java.time.Duration;
+import java.util.function.Supplier;
 
 import org.example.gametopupkh.common.exception.ApiException;
+import org.example.gametopupkh.payment.bakong.dto.BakongCheckAccountRequest;
+import org.example.gametopupkh.payment.bakong.dto.BakongCheckAccountResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionRequest;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse;
 import org.example.gametopupkh.payment.gateway.PaymentGateway.PaymentGatewayException;
@@ -21,13 +23,17 @@ import org.springframework.web.client.RestClient;
 
 /**
  * HTTP client for Bakong Open API.
- * Authenticates using a Bearer token and verifies transactions via {@code /v1/check_transaction_by_md5}.
+ * Authenticates using a Bearer token and performs read-only lookups:
+ * {@code /v1/check_transaction_by_md5} and {@code /v1/check_bakong_account}.
+ * Transient network and 5xx failures are retried at most {@code payment.bakong.max-retries}
+ * times; authentication, rate-limit and validation failures are never retried.
  */
 @Component
 public class BakongApiClient {
 
     private static final Logger log = LoggerFactory.getLogger(BakongApiClient.class);
     private static final String GATEWAY_NAME = "bakong";
+    private static final long BASE_RETRY_BACKOFF_MS = 100L;
 
     private final RestClient restClient;
     private final BakongProperties properties;
@@ -73,6 +79,34 @@ public class BakongApiClient {
             throw new ApiException(HttpStatus.BAD_REQUEST, "MD5_REQUIRED", "QR MD5 hash is required to check Bakong transaction");
         }
 
+        ensureProviderCallAllowed();
+        return withRetries("check_transaction_by_md5",
+                () -> post(BakongProperties.CHECK_TRANSACTION_PATH,
+                        new BakongCheckTransactionRequest(md5.trim()),
+                        BakongCheckTransactionResponse.class));
+    }
+
+    /**
+     * Verifies that a Bakong account exists and can receive payments.
+     * This is a read-only lookup; it does not move money.
+     *
+     * @param accountId Bakong account ID, for example {@code merchant@bank}
+     * @return typed response from Bakong; {@code responseCode == 0} means verified
+     */
+    public BakongCheckAccountResponse checkAccount(String accountId) {
+        if (accountId == null || accountId.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "ACCOUNT_ID_REQUIRED",
+                    "Bakong account ID is required to run account verification");
+        }
+
+        ensureProviderCallAllowed();
+        return withRetries("check_bakong_account",
+                () -> post(BakongProperties.CHECK_ACCOUNT_PATH,
+                        new BakongCheckAccountRequest(accountId.trim()),
+                        BakongCheckAccountResponse.class));
+    }
+
+    private void ensureProviderCallAllowed() {
         if (properties.isProduction() && !properties.isEnabled()) {
             throw new PaymentGatewayException(GATEWAY_NAME, "Live Bakong payment verification is disabled by configuration");
         }
@@ -81,13 +115,16 @@ public class BakongApiClient {
         if (properties.isEnabled() && (bearerToken == null || bearerToken.isBlank())) {
             throw new PaymentGatewayException(GATEWAY_NAME, "Bakong API token is not configured");
         }
+    }
 
+    private <T> T post(String path, Object body, Class<T> responseType) {
+        String bearerToken = properties.apiToken();
         try {
             return restClient.post()
-                    .uri(BakongProperties.CHECK_TRANSACTION_PATH)
+                    .uri(path)
                     .contentType(MediaType.APPLICATION_JSON)
                     .header(HttpHeaders.AUTHORIZATION, "Bearer " + bearerToken)
-                    .body(new BakongCheckTransactionRequest(md5.trim()))
+                    .body(body)
                     .retrieve()
                     .onStatus(status -> status.value() == 401 || status.value() == 403, (request, response) -> {
                         log.warn("Bakong API authentication failure (HTTP {})", response.getStatusCode().value());
@@ -100,9 +137,10 @@ public class BakongApiClient {
                     })
                     .onStatus(HttpStatusCode::is5xxServerError, (request, response) -> {
                         log.warn("Bakong API server error (HTTP {})", response.getStatusCode().value());
-                        throw new PaymentGatewayException(GATEWAY_NAME, "Bakong API returned server error " + response.getStatusCode().value());
+                        throw new BakongTransientException(
+                                "Bakong API returned server error " + response.getStatusCode().value());
                     })
-                    .body(BakongCheckTransactionResponse.class);
+                    .body(responseType);
         } catch (HttpClientErrorException.Unauthorized | HttpClientErrorException.Forbidden e) {
             log.warn("Bakong API unauthorized: {}", e.getMessage());
             throw new PaymentGatewayException(GATEWAY_NAME, "Bakong API authentication failed. Verify API token.", e);
@@ -111,16 +149,59 @@ public class BakongApiClient {
                     "Bakong API rate limit exceeded; retry after delay");
         } catch (ResourceAccessException e) {
             log.warn("Timeout or network error connecting to Bakong API: {}", e.getMessage());
-            throw new PaymentGatewayException(GATEWAY_NAME, "Timeout or connection error reading Bakong API", e);
-        } catch (PaymentGatewayException | ApiException e) {
+            throw new BakongTransientException("Timeout or connection error reading Bakong API", e);
+        } catch (HttpServerErrorException e) {
+            throw new BakongTransientException(
+                    "Bakong API returned server error " + e.getStatusCode().value(), e);
+        } catch (PaymentGatewayException | ApiException | BakongTransientException e) {
             throw e;
         } catch (Exception e) {
-            log.warn("Unexpected error checking Bakong transaction: {}", e.getMessage());
-            throw new PaymentGatewayException(GATEWAY_NAME, "Bakong check-transaction lookup failed: " + e.getMessage(), e);
+            log.warn("Unexpected error calling Bakong API: {}", e.getMessage());
+            throw new PaymentGatewayException(GATEWAY_NAME, "Bakong API lookup failed: " + e.getMessage(), e);
         }
     }
 
-    public BakongProperties properties() {
-        return properties;
+    private <T> T withRetries(String operation, Supplier<T> call) {
+        int maxAttempts = Math.max(1, properties.maxRetries() + 1);
+        BakongTransientException lastFailure = null;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                return call.get();
+            } catch (BakongTransientException e) {
+                lastFailure = e;
+                if (attempt >= maxAttempts) {
+                    break;
+                }
+                log.warn("Transient Bakong {} failure (attempt {}/{}): {}",
+                        operation, attempt, maxAttempts, e.getMessage());
+                sleepBeforeRetry(attempt);
+            }
+        }
+        throw new PaymentGatewayException(GATEWAY_NAME,
+                "Bakong " + operation + " failed after " + maxAttempts + " attempt(s): "
+                        + (lastFailure == null ? "unknown error" : lastFailure.getMessage()),
+                lastFailure);
+    }
+
+    private static void sleepBeforeRetry(int attempt) {
+        try {
+            Thread.sleep(BASE_RETRY_BACKOFF_MS * attempt);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new PaymentGatewayException(GATEWAY_NAME, "Interrupted while retrying Bakong API call", e);
+        }
+    }
+
+    /**
+     * Internal marker for failures that are safe to retry because the lookup is read-only.
+     */
+    private static final class BakongTransientException extends RuntimeException {
+        private BakongTransientException(String message) {
+            super(message);
+        }
+
+        private BakongTransientException(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 }

@@ -24,6 +24,8 @@ import org.example.gametopupkh.payment.PaymentEventRepository;
 import org.example.gametopupkh.payment.PaymentProvider;
 import org.example.gametopupkh.payment.PaymentRepository;
 import org.example.gametopupkh.payment.PaymentStatus;
+import org.example.gametopupkh.payment.bakong.BakongVerificationService;
+import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
 import org.example.gametopupkh.payment.gateway.PaymentGateway;
 import org.example.gametopupkh.payment.gateway.PaymentGateway.PaymentGatewayException;
 import org.example.gametopupkh.payment.gateway.PaymentGateway.PaymentIntent;
@@ -66,6 +68,7 @@ class PaymentReconciliationServiceTests {
     @Autowired private EntityManager entityManager;
     @Autowired private PlatformTransactionManager transactionManager;
     @MockitoBean private PaymentGateway gateway;
+    @MockitoBean private BakongVerificationService bakongVerificationService;
 
     private User customer;
 
@@ -210,7 +213,23 @@ class PaymentReconciliationServiceTests {
     }
 
     @Test
-    void nonAbaGatewaysAreNotReconciled() {
+    void bakongPaymentsAreReconciledEvenWhenTheDefaultGatewayIsMock() {
+        when(gateway.name()).thenReturn("mock");
+        Order order = createOrder();
+        Payment payment = createBakongPayment(order);
+        when(bakongVerificationService.verifyPayment(payment.getId()))
+                .thenReturn(completedResponse(payment, order));
+
+        PaymentReconciliationResult result = service.reconcile();
+
+        assertThat(result.inspected()).isEqualTo(1);
+        assertThat(result.completed()).isEqualTo(1);
+        verify(bakongVerificationService).verifyPayment(payment.getId());
+        verify(gateway, never()).checkStatus(anyString());
+    }
+
+    @Test
+    void mockGatewayWithNoBakongCandidatesInspectsNothing() {
         when(gateway.name()).thenReturn("mock");
 
         PaymentReconciliationResult result = service.reconcile();
@@ -243,6 +262,33 @@ class PaymentReconciliationServiceTests {
         payment.setAmount(amount);
         payment.setCurrency(currency);
         return payments.save(payment);
+    }
+
+    private Payment createBakongPayment(Order order) {
+        Payment payment = createPayment(order, PaymentStatus.PENDING, order.getTotalAmount(), order.getCurrency());
+        payment.setProvider(PaymentProvider.BAKONG);
+        payment.setQrMd5("0123456789abcdef0123456789abcdef");
+        return payments.save(payment);
+    }
+
+    private PaymentStatusResponse completedResponse(Payment payment, Order order) {
+        Instant now = Instant.now();
+        return new PaymentStatusResponse(
+                payment.getId(),
+                order.getId(),
+                PaymentProvider.BAKONG,
+                payment.getReference(),
+                "bakong-tx-hash",
+                PaymentStatus.COMPLETED,
+                payment.getAmount(),
+                payment.getCurrency(),
+                payment.getQrString(),
+                null,
+                null,
+                payment.getExpiresAt(),
+                now,
+                payment.getCreatedAt(),
+                now);
     }
 
     private PaymentIntent intent(String reference, PaymentStatus status, BigDecimal amount, String currency) {

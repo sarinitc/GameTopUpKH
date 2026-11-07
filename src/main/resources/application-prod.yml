@@ -58,6 +58,22 @@ server:
     include-stacktrace: never
     include-binding-errors: never
 
+management:
+  endpoints:
+    web:
+      exposure:
+        # Render's health check uses /actuator/health/readiness. The other
+        # actuator endpoints listed here are admin-authenticated in SecurityConfig.
+        include: health,info,metrics
+  endpoint:
+    health:
+      # Anonymous production callers only see UP/DOWN; never connection details.
+      # An authenticated ADMIN can still inspect health components.
+      show-details: when-authorized
+      show-components: when-authorized
+      probes:
+        enabled: true
+
 app:
   dev-tools:
     # Mock payment confirmation and mock delivery routes must never exist in
@@ -75,7 +91,7 @@ payment:
     environment: ${ABA_PAYWAY_ENVIRONMENT:sandbox}
     live-payments-enabled: false
   bakong:
-    enabled: ${BAKONG_PAYMENT_ENABLED:false}
+    enabled: ${BAKONG_LIVE_ENABLED:${BAKONG_PAYMENT_ENABLED:false}}
   reconciliation:
     # Scheduled provider polling is disabled until a live gateway is approved.
     enabled: ${PAYMENT_RECONCILIATION_ENABLED:false}

@@ -61,16 +61,19 @@ public class PaymentReconciliationServiceImpl implements PaymentReconciliationSe
     @Override
     public PaymentReconciliationResult reconcile() {
         Instant startedAt = Instant.now();
-        PaymentProvider provider = activeProvider();
-        if (provider != PaymentProvider.ABA && provider != PaymentProvider.BAKONG) {
+        List<PaymentProvider> providers = reconciliationProviders();
+        if (providers.isEmpty()) {
             return summarize(startedAt, List.of());
         }
 
-        List<UUID> paymentIds = paymentRepository.findReconciliationCandidates(
-                provider,
-                startedAt.minus(minAge),
-                startedAt.minus(cooldown),
-                PageRequest.of(0, batchSize));
+        List<UUID> paymentIds = new ArrayList<>();
+        for (PaymentProvider provider : providers) {
+            paymentIds.addAll(paymentRepository.findReconciliationCandidates(
+                    provider,
+                    startedAt.minus(minAge),
+                    startedAt.minus(cooldown),
+                    PageRequest.of(0, batchSize)));
+        }
 
         List<PaymentOutcome> outcomes = new ArrayList<>(paymentIds.size());
         for (UUID paymentId : paymentIds) {
@@ -112,6 +115,24 @@ public class PaymentReconciliationServiceImpl implements PaymentReconciliationSe
             case NEEDS_REVIEW -> Outcome.NEEDS_REVIEW;
             case FAILED, EXPIRED, CANCELLED -> Outcome.CLOSED;
         };
+    }
+
+    /**
+     * Bakong verification is independent of the storefront's default gateway, so
+     * Bakong candidates are always included. ABA can only be checked through the
+     * active {@link PaymentGateway} bean and is therefore included only when ABA
+     * is the configured gateway. MOCK/unknown gateways add no additional provider.
+     */
+    private List<PaymentProvider> reconciliationProviders() {
+        List<PaymentProvider> providers = new ArrayList<>();
+        PaymentProvider active = activeProvider();
+        if (active == PaymentProvider.ABA || active == PaymentProvider.BAKONG) {
+            providers.add(active);
+        }
+        if (!providers.contains(PaymentProvider.BAKONG)) {
+            providers.add(PaymentProvider.BAKONG);
+        }
+        return providers;
     }
 
     private PaymentProvider activeProvider() {

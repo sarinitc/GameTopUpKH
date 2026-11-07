@@ -1,13 +1,19 @@
 package org.example.gametopupkh.payment.bakong;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 
+import kh.gov.nbc.bakong_khqr.BakongKHQR;
+import kh.gov.nbc.bakong_khqr.model.CRCValidation;
+import kh.gov.nbc.bakong_khqr.model.KHQRDecodeData;
+import kh.gov.nbc.bakong_khqr.model.KHQRResponse;
 import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.payment.bakong.dto.BakongKhqrResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -19,17 +25,12 @@ class BakongKhqrServiceTests {
 
     @BeforeEach
     void setUp() {
-        properties = new BakongProperties(
-                "https://api-bakong.nbc.gov.kh",
-                "test-api-token",
-                "merchant@bank",
-                "GameTopUp-KH"
-        );
+        properties = sandboxProperties("merchant@bank", 10);
         service = new BakongKhqrService(properties);
     }
 
     @Test
-    @DisplayName("Generates valid dynamic KHQR for USD with correct EMVCo structure and MD5")
+    @DisplayName("Generates a genuine dynamic KHQR with the official NBC SDK")
     void generatesValidUsdDynamicKhqr() {
         BigDecimal amount = new BigDecimal("4.25");
         String currency = "USD";
@@ -49,7 +50,6 @@ class BakongKhqrServiceTests {
         // Tag 01: Dynamic point of initiation (12)
         assertThat(qr).contains("010212");
         // Tag 29: Merchant account info
-        assertThat(qr).contains("29");
         assertThat(qr).contains("merchant@bank");
         // Tag 52: MCC 5999
         assertThat(qr).contains("52045999");
@@ -65,21 +65,31 @@ class BakongKhqrServiceTests {
         assertThat(qr).contains("6010Phnom Penh");
         // Tag 62: Bill Number
         assertThat(qr).contains("PAY-REF-123456");
+        // Tag 99: SDK-provided creation/expiration timestamps
+        assertThat(qr).contains("99");
         // Tag 63: CRC16
         assertThat(qr).contains("6304");
 
-        // Verify CRC16 checksum at the tail
-        String payloadWithoutCrc = qr.substring(0, qr.length() - 4);
-        String expectedCrc = BakongKhqrService.calculateCrc16(payloadWithoutCrc);
-        assertThat(qr).endsWith(expectedCrc);
+        KHQRResponse<CRCValidation> verification = BakongKHQR.verify(qr);
+        assertThat(verification.getKHQRStatus().getCode()).isZero();
+        assertThat(verification.getData().isValid()).isTrue();
 
-        // Verify MD5 hash
+        KHQRResponse<KHQRDecodeData> decoded = BakongKHQR.decode(qr);
+        assertThat(decoded.getKHQRStatus().getCode()).isZero();
+        assertThat(decoded.getData().getBakongAccountID()).isEqualTo("merchant@bank");
+        assertThat(new BigDecimal(decoded.getData().getTransactionAmount())).isEqualByComparingTo("4.25");
+        assertThat(decoded.getData().getTransactionCurrency()).isEqualTo("840");
+        assertThat(decoded.getData().getBillNumber()).isEqualTo(reference);
+        assertThat(decoded.getData().getExpirationTimestamp())
+                .isEqualTo(String.valueOf(response.expiresAt().toEpochMilli()));
+
+        // MD5 is computed over the final UTF-8 QR payload
         assertThat(response.md5()).hasSize(32).matches("^[a-f0-9]{32}$");
         assertThat(response.md5()).isEqualTo(BakongKhqrService.calculateMd5(qr));
     }
 
     @Test
-    @DisplayName("Generates valid dynamic KHQR for KHR currency")
+    @DisplayName("Generates a genuine dynamic KHQR for KHR currency")
     void generatesValidKhrDynamicKhqr() {
         BigDecimal amount = new BigDecimal("40000");
         String currency = "KHR";
@@ -117,17 +127,52 @@ class BakongKhqrServiceTests {
     }
 
     @Test
+    @DisplayName("Rejects KHR amounts with riel decimals that KHQR cannot represent")
+    void rejectsKhrDecimals() {
+        assertThatThrownBy(() -> service.generateDynamicKhqr(new BigDecimal("40000.50"), "KHR", "REF-1"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("whole riel");
+    }
+
+    @Test
+    @DisplayName("Rejects KHQR generation when no merchant account ID is configured")
+    void rejectsMissingMerchantAccountId() {
+        BakongKhqrService customService = new BakongKhqrService(sandboxProperties("", 10));
+
+        assertThatThrownBy(() -> customService.generateDynamicKhqr(new BigDecimal("5.00"), "USD", "REF-1"))
+                .isInstanceOf(ApiException.class)
+                .hasMessageContaining("account ID must be configured");
+    }
+
+    @Test
+    @DisplayName("Production generation fails closed while live payments are disabled")
+    void productionGenerationRequiresExplicitEnablement() {
+        BakongProperties productionDisabled = new BakongProperties(
+                "production", false, "https://api-bakong.nbc.gov.kh", "token", "merchant@bank",
+                "GameTopUp-KH", "Phnom Penh", 10, Duration.ofSeconds(5),
+                Duration.ofSeconds(15), 2);
+        BakongKhqrService customService = new BakongKhqrService(productionDisabled);
+
+        assertThatThrownBy(() -> customService.generateDynamicKhqr(new BigDecimal("5.00"), "USD", "REF-1"))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.SERVICE_UNAVAILABLE)
+                .hasMessageContaining("disabled");
+    }
+
+    @Test
     @DisplayName("Expiration is capped at maximum 10 minutes")
     void expirationIsCappedAtTenMinutes() {
-        BakongProperties longLifetimeProps = new BakongProperties(
-                "production", false, "https://api-bakong.nbc.gov.kh", "token", "acc@bank",
-                "GameTopUp-KH", "Phnom Penh", 30, java.time.Duration.ofSeconds(5),
-                java.time.Duration.ofSeconds(15), 2
-        );
-        BakongKhqrService customService = new BakongKhqrService(longLifetimeProps);
+        BakongKhqrService customService = new BakongKhqrService(sandboxProperties("merchant@bank", 30));
         BakongKhqrResponse response = customService.generateDynamicKhqr(new BigDecimal("5.00"), "USD", "REF-1");
 
         Instant maxAllowed = Instant.now().plusSeconds(600 + 5);
         assertThat(response.expiresAt()).isBeforeOrEqualTo(maxAllowed);
+    }
+
+    private static BakongProperties sandboxProperties(String accountId, int lifetimeMinutes) {
+        return new BakongProperties(
+                "sandbox", false, "https://sit-api-bakong.nbc.org.kh", "test-api-token", accountId,
+                "GameTopUp-KH", "Phnom Penh", lifetimeMinutes, Duration.ofSeconds(5),
+                Duration.ofSeconds(15), 2);
     }
 }
