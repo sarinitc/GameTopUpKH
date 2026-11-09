@@ -115,6 +115,7 @@ Recommended:
 | Variable | Value | Why |
 | --- | --- | --- |
 | `APP_CORS_ALLOWED_ORIGINS` | `https://your-app.vercel.app` | Without it the browser frontend is blocked |
+| `VOLSEVER_ENABLED` | `true` | Selects the Volsever adapter; `prod` defaults it to `true`, but set it explicitly so the intent is visible |
 | `DB_POOL_SIZE` | `5` | Neon connection limits are modest |
 | `DB_POOL_MIN_IDLE` | `2` | Avoid holding idle connections |
 
@@ -190,6 +191,29 @@ migration `V14` is missing; `UNAVAILABLE` means the provider rejected the call
 (check the log code: `VOLSEVER_AUTH_FAILED`, `VOLSEVER_INSUFFICIENT_BALANCE`,
 `VOLSEVER_RATE_LIMITED`, `VOLSEVER_UNAVAILABLE` or `VOLSEVER_INVALID_RESPONSE`).
 The API key is never returned or logged.
+
+#### `provider = SUPPLIER_API` in the response
+
+This means the safe fallback is active and no provider was called. Check the
+Render deploy log for the startup line:
+
+```text
+Player verification provider active: VOLSEVER (free-fire=true, mobile-legends=true, volsever.enabled=true, volsever.apiKeyPresent=true)
+```
+
+If it says `SUPPLIER_API (free-fire=false, mobile-legends=false, ...)`, then:
+
+1. Confirm Render is running the commit containing `player/integration/volsever`.
+   Use **Manual Deploy → Deploy latest commit** if unsure.
+2. Confirm `SPRING_PROFILES_ACTIVE=prod`; outside `prod`, Volsever defaults off.
+3. Set `VOLSEVER_ENABLED=true` and `VOLSEVER_API_KEY` in the Render environment,
+   then save/redeploy. A missing key with Volsever enabled fails startup by
+   design, so a running service showing `SUPPLIER_API` has the switch off or the
+   old build deployed.
+4. Never enable the dev mock (`player.verification.mock-enabled`) in production.
+
+The startup diagnostic logs only the provider name and boolean flags; it never
+logs the key, request URL, player ID or provider response body.
 
 ### Production Swagger (opt-in, ADMIN only)
 

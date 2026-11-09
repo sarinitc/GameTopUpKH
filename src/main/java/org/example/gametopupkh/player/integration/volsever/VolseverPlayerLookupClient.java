@@ -8,6 +8,8 @@ import org.example.gametopupkh.player.dto.PlayerVerificationStatus;
 import org.example.gametopupkh.player.dto.PlayerVerifyRequest;
 import org.example.gametopupkh.player.dto.PlayerVerifyResponse;
 import org.example.gametopupkh.player.integration.PlayerLookupClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.ResourceAccessException;
@@ -34,6 +36,7 @@ import tools.jackson.databind.json.JsonMapper;
 public final class VolseverPlayerLookupClient implements PlayerLookupClient {
 
     static final String PROVIDER = "VOLSEVER";
+    private static final Logger log = LoggerFactory.getLogger(VolseverPlayerLookupClient.class);
     private static final int MAX_RESPONSE_BYTES = 65_536;
 
     private static final JsonMapper JSON = JsonMapper.builder()
@@ -65,6 +68,7 @@ public final class VolseverPlayerLookupClient implements PlayerLookupClient {
             return unavailable(request);
         }
 
+        log.debug("Volsever lookup started: game={}", gameSlug);
         try {
             return http.get()
                     .uri(uriBuilder -> {
@@ -79,6 +83,8 @@ public final class VolseverPlayerLookupClient implements PlayerLookupClient {
                     .exchange((httpRequest, response) -> {
                         int status = response.getStatusCode().value();
                         if (status == 404) {
+                            log.debug("Volsever lookup finished: game={}, outcome=INVALID, httpStatus=404",
+                                    gameSlug);
                             return new PlayerVerifyResponse(PlayerVerificationStatus.INVALID,
                                     request.playerId(), request.zoneId(), null, null, PROVIDER);
                         }
@@ -104,7 +110,10 @@ public final class VolseverPlayerLookupClient implements PlayerLookupClient {
                             throw providerError(HttpStatus.BAD_GATEWAY, "VOLSEVER_UPSTREAM_ERROR",
                                     "Volsever returned an unsuccessful HTTP response");
                         }
-                        return parseVerified(request, response.getBody());
+                        PlayerVerifyResponse verified = parseVerified(request, response.getBody());
+                        log.debug("Volsever lookup finished: game={}, outcome=VERIFIED, httpStatus=200",
+                                gameSlug);
+                        return verified;
                     });
         } catch (ResourceAccessException ex) {
             // Never retain the cause: transport failures can echo request details.
@@ -223,6 +232,8 @@ public final class VolseverPlayerLookupClient implements PlayerLookupClient {
     }
 
     private ApiException providerError(HttpStatus status, String code, String message) {
+        // Code and status only: no URL, headers, API key, player ID or response body.
+        log.debug("Volsever request failed: code={}, httpStatus={}", code, status.value());
         return new ApiException(status, code, message);
     }
 }

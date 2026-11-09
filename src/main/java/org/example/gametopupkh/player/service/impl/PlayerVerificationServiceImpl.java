@@ -76,6 +76,10 @@ public class PlayerVerificationServiceImpl implements PlayerVerificationService 
         PlayerVerifyRequest normalized = PlayerAccountValidator.normalizeAndValidate(gameSlug, request);
 
         if (!client.supports(gameSlug)) {
+            // The fallback adapter deliberately supports nothing. Without this line the
+            // only symptom is a valid-looking UNAVAILABLE response in production.
+            log.warn("No player lookup provider supports game {}; returning UNAVAILABLE (provider={})",
+                    gameSlug, client.provider());
             return unavailable(normalized.playerId(), normalized.zoneId());
         }
 
@@ -141,7 +145,11 @@ public class PlayerVerificationServiceImpl implements PlayerVerificationService 
 
         try {
             PlayerVerifyResponse raw = future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            return sanitizeResponse(request, raw);
+            PlayerVerifyResponse sanitized = sanitizeResponse(request, raw);
+            // Provider and outcome only; never the player ID, URL, headers or key.
+            log.debug("Player lookup completed: game={}, status={}, provider={}",
+                    gameSlug, sanitized.status(), sanitized.provider());
+            return sanitized;
         } catch (TimeoutException ex) {
             future.cancel(true);
             return unavailable(request.playerId(), request.zoneId());

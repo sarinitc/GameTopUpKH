@@ -581,6 +581,41 @@ provider outcome (`VOLSEVER_AUTH_FAILED`, `VOLSEVER_INSUFFICIENT_BALANCE`,
 `VOLSEVER_INVALID_RESPONSE`), the key, and the Volsever balance/quota. The key
 is intentionally redacted from logs and responses.
 
+### `UNAVAILABLE` with `provider = SUPPLIER_API`
+
+That combination means the **fallback adapter** is active, not Volsever. The
+fallback deliberately supports no game, so the service returns `UNAVAILABLE`
+without calling any provider. The startup log now states the active provider
+explicitly (no key or player ID is logged):
+
+```text
+Player verification provider active: VOLSEVER (free-fire=true, mobile-legends=true, volsever.enabled=true, volsever.apiKeyPresent=true)
+```
+
+or, when misconfigured:
+
+```text
+Player verification provider active: SUPPLIER_API (free-fire=false, mobile-legends=false, volsever.enabled=false, volsever.apiKeyPresent=false)
+WARN ... No live player verification provider is active; lookups will return UNAVAILABLE.
+```
+
+Check these in order:
+
+1. **Deployment** — Render must be running the commit that contains the
+   `player/integration/volsever` package. Trigger **Manual Deploy → Deploy
+   latest commit** if the build predates it.
+2. **Profile** — `SPRING_PROFILES_ACTIVE=prod`. Outside `prod`, Volsever defaults
+   to disabled.
+3. **Switch** — `VOLSEVER_ENABLED` must be `true` (or unset; `prod` defaults it
+   to `true`). If it is `false`, the fallback is selected.
+4. **Key** — `VOLSEVER_API_KEY` must be set in the Render environment. When
+   Volsever is enabled and the key is missing, startup fails by design; a
+   running service with `provider=SUPPLIER_API` therefore means the switch or
+   the deployment is wrong, not the key.
+
+If the provider is `VOLSEVER` but the status is `UNAVAILABLE`, the request
+reached the provider and failed there; use the logged `VOLSEVER_*` code.
+
 ## Identity and authentication
 
 The `auth` module owns the `refresh_tokens` table and the token lifecycle, the `identity`
