@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BakongKhqrServiceTests {
@@ -157,6 +158,41 @@ class BakongKhqrServiceTests {
                 .isInstanceOf(ApiException.class)
                 .hasFieldOrPropertyWithValue("status", HttpStatus.SERVICE_UNAVAILABLE)
                 .hasMessageContaining("disabled");
+    }
+
+    @Test
+    @DisplayName("Production with live payments enabled but no token refuses to issue a QR")
+    void productionEnabledWithoutTokenRefusesToGenerate() {
+        BakongProperties productionWithoutToken = new BakongProperties(
+                "production", true, "https://api-bakong.nbc.gov.kh", "", "merchant@bank",
+                "GameTopUp-KH", "Phnom Penh", 10, Duration.ofSeconds(5),
+                Duration.ofSeconds(15), 2);
+        BakongKhqrService customService = new BakongKhqrService(productionWithoutToken);
+
+        assertThatThrownBy(() -> customService.generateDynamicKhqr(new BigDecimal("5.00"), "USD", "REF-1"))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.SERVICE_UNAVAILABLE)
+                .hasMessageContaining("BAKONG_TOKEN/BAKONG_API_TOKEN");
+    }
+
+    @Test
+    @DisplayName("Sandbox preflight allows creation while the live switch is off")
+    void sandboxPreflightAllowsCreationWhileLiveSwitchIsOff() {
+        assertThatCode(service::ensurePaymentCreationAvailable).doesNotThrowAnyException();
+    }
+
+    @Test
+    @DisplayName("Production preflight rejects a missing merchant account before a payment is reserved")
+    void productionPreflightRejectsMissingAccount() {
+        BakongProperties productionWithoutAccount = new BakongProperties(
+                "production", true, "https://api-bakong.nbc.gov.kh", "token", "",
+                "GameTopUp-KH", "Phnom Penh", 10, Duration.ofSeconds(5),
+                Duration.ofSeconds(15), 2);
+
+        assertThatThrownBy(new BakongKhqrService(productionWithoutAccount)::ensurePaymentCreationAvailable)
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.SERVICE_UNAVAILABLE)
+                .hasMessageContaining("account ID must be configured");
     }
 
     @Test

@@ -148,6 +148,15 @@ supplier:
     provider-confirmed: ${BAY2GAME_PROVIDER_CONFIRMED:false}
     connect-timeout: ${BAY2GAME_CONNECT_TIMEOUT:3s}
     read-timeout: ${BAY2GAME_READ_TIMEOUT:10s}
+  vsc:
+    # VSC Games Free Fire top-up. Disabled until the provider contract is
+    # confirmed; selecting supplier.client=vsc without enabling this adapter
+    # fails fast in the registry.
+    enabled: ${VSC_ENABLED:false}
+    provider-confirmed: ${VSC_PROVIDER_CONFIRMED:false}
+    merchant-name: ${VSC_MERCHANT_NAME:GameTopUp-KH}
+    connect-timeout: ${VSC_CONNECT_TIMEOUT:3s}
+    read-timeout: ${VSC_READ_TIMEOUT:10s}
   mock:
     fail: ${SUPPLIER_MOCK_FAIL:false}
 

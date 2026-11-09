@@ -117,11 +117,16 @@ public class BakongVerificationService {
                     "The Bakong payment provider could not be reached: " + e.getMessage(), e);
         }
 
+        BakongCheckAccountResponse.BakongAccountData data = response == null ? null : response.data();
         return new BakongAccountVerificationResponse(
                 accountId,
                 response != null && response.isVerified(),
                 response == null ? null : response.responseCode(),
-                response == null ? null : response.responseMessage());
+                response == null ? null : response.responseMessage(),
+                data == null ? null : data.accountStatus(),
+                data == null ? null : data.frozen(),
+                data == null ? null : data.kycStatus(),
+                data == null ? null : data.canReceive());
     }
 
     /**
@@ -234,8 +239,10 @@ public class BakongVerificationService {
             Payment payment = paymentRepository.findByIdForUpdate(paymentId)
                     .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "PAYMENT_NOT_FOUND", "Payment not found"));
 
+            // Another request (or a concurrent verification) already completed
+            // this payment. Fulfillment is claimed durably by FulfillmentService,
+            // so do not submit it a second time from here.
             if (payment.getStatus() == PaymentStatus.COMPLETED) {
-                fulfillCompletedPayment(payment);
                 return PaymentStatusResponse.from(payment);
             }
 

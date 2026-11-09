@@ -234,7 +234,7 @@ public class BakongProperties {
                 ", enabled=" + enabled +
                 ", baseUrl='" + baseUrl + '\'' +
                 ", apiToken='[REDACTED]'" +
-                ", accountId='" + (accountId.isBlank() ? "[NOT_SET]" : accountId) + '\'' +
+                ", accountId='[REDACTED]'" +
                 ", merchantName='" + merchantName + '\'' +
                 ", merchantCity='" + merchantCity + '\'' +
                 ", lifetimeMinutes=" + lifetimeMinutes +

@@ -102,6 +102,11 @@ payment:
 
 supplier:
   client: ${SUPPLIER_CLIENT:mock}
+  vsc:
+    # VSC Games top-up stays off in production until the provider contract,
+    # idempotency semantics and approvals are confirmed.
+    enabled: false
+    provider-confirmed: false
 
 fulfillment:
   worker:

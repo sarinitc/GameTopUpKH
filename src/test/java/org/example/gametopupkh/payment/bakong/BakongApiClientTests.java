@@ -1,6 +1,7 @@
 package org.example.gametopupkh.payment.bakong;
 
 import java.math.BigDecimal;
+import java.net.SocketTimeoutException;
 
 import org.example.gametopupkh.common.exception.ApiException;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckAccountResponse;
@@ -22,6 +23,7 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withException;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -96,11 +98,18 @@ class BakongApiClientTests {
     @Test
     @DisplayName("Verifies a Bakong account via /v1/check_bakong_account")
     void verifiesBakongAccount() {
+        // Mirrors the payload shape observed from the live production API
         String responseJson = """
                 {
                     "responseCode": 0,
-                    "responseMessage": "Success",
-                    "data": { "accountId": "merchant@bank" }
+                    "responseMessage": "Account ID exists",
+                    "errorCode": null,
+                    "data": {
+                        "accountStatus": "ACTIVATED",
+                        "frozen": 0,
+                        "kycStatus": "FULL_KYC",
+                        "canReceive": true
+                    }
                 }
                 """;
 
@@ -116,7 +125,12 @@ class BakongApiClientTests {
         assertThat(response).isNotNull();
         assertThat(response.isVerified()).isTrue();
         assertThat(response.responseCode()).isZero();
-        assertThat(response.responseMessage()).isEqualTo("Success");
+        assertThat(response.responseMessage()).isEqualTo("Account ID exists");
+        assertThat(response.data()).isNotNull();
+        assertThat(response.data().accountStatus()).isEqualTo("ACTIVATED");
+        assertThat(response.data().frozen()).isZero();
+        assertThat(response.data().kycStatus()).isEqualTo("FULL_KYC");
+        assertThat(response.data().canReceive()).isTrue();
     }
 
     @Test
@@ -249,6 +263,58 @@ class BakongApiClientTests {
         mockServer.verify();
         assertThat(response.isSuccess()).isTrue();
         assertThat(response.data().toAccountId()).isEqualTo("merchant@bank");
+    }
+
+    @Test
+    @DisplayName("Read-only account verification is allowed while live payments are disabled")
+    void accountCheckAllowedWhileLivePaymentsAreDisabled() {
+        BakongProperties disabledProdProps = new BakongProperties(
+                "production", false, "https://example.com", "valid-bearer-token", "merchant@bank",
+                "GameTopUp-KH", "Phnom Penh", 10, java.time.Duration.ofSeconds(2),
+                java.time.Duration.ofSeconds(2), 2);
+        BakongApiClient prodClient = new BakongApiClient(restClientBuilder, disabledProdProps);
+
+        mockServer.expect(requestTo("https://example.com/v1/check_bakong_account"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer valid-bearer-token"))
+                .andRespond(withSuccess("{\"responseCode\":0,\"responseMessage\":\"Success\"}",
+                        MediaType.APPLICATION_JSON));
+
+        assertThat(prodClient.checkAccount("merchant@bank").isVerified()).isTrue();
+        mockServer.verify();
+    }
+
+    @Test
+    @DisplayName("Account verification fails closed when no token is configured")
+    void accountCheckRequiresAToken() {
+        BakongProperties withoutToken = new BakongProperties(
+                "production", false, "https://example.com", "", "merchant@bank",
+                "GameTopUp-KH", "Phnom Penh", 10, java.time.Duration.ofSeconds(2),
+                java.time.Duration.ofSeconds(2), 2);
+        BakongApiClient prodClient = new BakongApiClient(restClientBuilder, withoutToken);
+
+        assertThatThrownBy(() -> prodClient.checkAccount("merchant@bank"))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.SERVICE_UNAVAILABLE)
+                .hasMessageContaining("token is not configured");
+    }
+
+    @Test
+    @DisplayName("Network timeouts are retried and surfaced as a provider failure")
+    void retriesTimeoutsAndFailsSafely() {
+        String md5 = "0123456789abcdef0123456789abcdef";
+
+        for (int attempt = 0; attempt <= properties.maxRetries(); attempt++) {
+            mockServer.expect(requestTo("https://example.com/v1/check_transaction_by_md5"))
+                    .andExpect(method(HttpMethod.POST))
+                    .andRespond(withException(new SocketTimeoutException("read timed out")));
+        }
+
+        assertThatThrownBy(() -> client.checkTransaction(md5))
+                .isInstanceOf(PaymentGatewayException.class)
+                .hasMessageContaining("failed after " + (properties.maxRetries() + 1) + " attempt(s)")
+                .hasMessageContaining("Timeout or connection error");
+        mockServer.verify();
     }
 
     @Test

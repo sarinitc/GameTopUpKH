@@ -177,15 +177,18 @@ class BakongPaymentApiTests {
     void adminCanVerifyMerchantAccount() throws Exception {
         UUID adminId = createUser("ADMIN");
         when(apiClient.checkAccount("merchant@bank"))
-                .thenReturn(new BakongCheckAccountResponse(0, "Success",
-                        java.util.Map.of("accountId", "merchant@bank")));
+                .thenReturn(new BakongCheckAccountResponse(0, "Account ID exists",
+                        new BakongCheckAccountResponse.BakongAccountData("ACTIVATED", 0, "FULL_KYC", true)));
 
         mockMvc.perform(get("/api/v1/admin/payments/bakong/account")
                         .header(HttpHeaders.AUTHORIZATION, bearer(adminId)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accountId").value("merchant@bank"))
                 .andExpect(jsonPath("$.data.verified").value(true))
-                .andExpect(jsonPath("$.data.responseCode").value(0));
+                .andExpect(jsonPath("$.data.responseCode").value(0))
+                .andExpect(jsonPath("$.data.canReceive").value(true))
+                .andExpect(jsonPath("$.data.accountStatus").value("ACTIVATED"))
+                .andExpect(jsonPath("$.data.kycStatus").value("FULL_KYC"));
 
         verify(apiClient).checkAccount("merchant@bank");
     }

@@ -2,7 +2,14 @@ package org.example.gametopupkh.payment.bakong;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 
 import jakarta.persistence.EntityManager;
 import org.example.gametopupkh.common.exception.ApiException;
@@ -24,6 +31,7 @@ import org.example.gametopupkh.payment.PaymentStatus;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse;
 import org.example.gametopupkh.payment.bakong.dto.BakongCheckTransactionResponse.BakongTransactionData;
 import org.example.gametopupkh.payment.dto.PaymentStatusResponse;
+import org.example.gametopupkh.payment.gateway.PaymentGateway.PaymentGatewayException;
 import org.example.gametopupkh.supplier.SupplierTestFixtures;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -411,6 +419,71 @@ class BakongVerificationServiceTests {
                 .hasMessageContaining("cooldown");
 
         verify(apiClient, never()).checkTransaction(any());
+    }
+
+    @Test
+    @DisplayName("Provider timeout leaves the payment PENDING and never fulfils")
+    void providerTimeoutIsHandledSafely() {
+        when(apiClient.checkTransaction(payment.getQrMd5()))
+                .thenThrow(new PaymentGatewayException("bakong",
+                        "Timeout or connection error reading Bakong API"));
+
+        assertThatThrownBy(() -> verificationService.verifyPayment(payment.getId(), customer.getId()))
+                .isInstanceOf(ApiException.class)
+                .hasFieldOrPropertyWithValue("status", HttpStatus.BAD_GATEWAY);
+
+        Payment unchanged = payments.findById(payment.getId()).orElseThrow();
+        assertThat(unchanged.getStatus()).isEqualTo(PaymentStatus.PENDING);
+        assertThat(unchanged.getLastProviderCheckAt()).isNotNull();
+        assertThat(orders.findById(order.getId()).orElseThrow().getStatus())
+                .isEqualTo(OrderStatus.PENDING_PAYMENT);
+
+        verify(fulfillmentService, never()).fulfillOrder(any());
+    }
+
+    @Test
+    @DisplayName("Concurrent verification completes the payment and fulfils it once")
+    void concurrentVerificationFulfilsOnce() throws Exception {
+        String txHash = "hash-concurrent-" + UUID.randomUUID();
+        BakongTransactionData data = new BakongTransactionData(
+                txHash,
+                "customer@devb",
+                "merchant@bank",
+                "USD",
+                new BigDecimal("4.25"),
+                "Order description",
+                System.currentTimeMillis(),
+                System.currentTimeMillis(),
+                "EXT-CONCURRENT"
+        );
+        when(apiClient.checkTransaction(payment.getQrMd5()))
+                .thenReturn(new BakongCheckTransactionResponse(0, "Success", data));
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<PaymentStatusResponse>> futures = new ArrayList<>();
+            for (int i = 0; i < 2; i++) {
+                futures.add(pool.submit(() -> {
+                    start.await();
+                    return verificationService.verifyPayment(payment.getId(), customer.getId());
+                }));
+            }
+            start.countDown();
+            for (Future<PaymentStatusResponse> future : futures) {
+                assertThat(future.get(10, TimeUnit.SECONDS).status()).isEqualTo(PaymentStatus.COMPLETED);
+            }
+        } finally {
+            pool.shutdownNow();
+        }
+
+        Payment updated = payments.findById(payment.getId()).orElseThrow();
+        assertThat(updated.getStatus()).isEqualTo(PaymentStatus.COMPLETED);
+        assertThat(updated.getBakongHash()).isEqualTo(txHash);
+        assertThat(orders.findById(order.getId()).orElseThrow().getStatus())
+                .isEqualTo(OrderStatus.PAID);
+
+        verify(fulfillmentService, times(1)).fulfillOrder(order.getId());
     }
 
     private User createUser(String roleName) {

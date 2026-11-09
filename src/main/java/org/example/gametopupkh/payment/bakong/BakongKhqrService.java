@@ -56,17 +56,13 @@ public class BakongKhqrService {
      */
     public BakongKhqrResponse generateDynamicKhqr(BigDecimal amount, String currency, String paymentReference) {
         validateRequest(amount, currency, paymentReference);
-        ensureGenerationAllowed();
+        ensurePaymentCreationAvailable();
 
         String normalizedCurrency = currency.trim().toUpperCase(Locale.ROOT);
         KHQRCurrency sdkCurrency = resolveCurrency(normalizedCurrency);
         String expectedCurrencyCode = currencyCode(normalizedCurrency);
 
         String accountId = properties.accountId();
-        if (accountId == null || accountId.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "BAKONG_ACCOUNT_ID_MISSING",
-                    "A Bakong merchant account ID must be configured before generating a KHQR");
-        }
 
         String merchantName = sanitize(properties.merchantName(), 25, "GameTopUp-KH");
         String merchantCity = sanitize(properties.merchantCity(), 15, "Phnom Penh");
@@ -113,10 +109,32 @@ public class BakongKhqrService {
         );
     }
 
-    private void ensureGenerationAllowed() {
-        if (properties.isProduction() && !properties.isEnabled()) {
+    /**
+     * Fail-closed preflight used before any customer payment row is reserved.
+     * A production deployment must explicitly enable live payments <em>and</em>
+     * have an API token, because a QR that can never be verified would strand the
+     * customer's money. Sandbox generation stays available without live approval
+     * so the integration can be exercised with test data.
+     */
+    public void ensurePaymentCreationAvailable() {
+        ensureLivePaymentsAllowed();
+        if (properties.accountId() == null || properties.accountId().isBlank()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "BAKONG_ACCOUNT_ID_MISSING",
+                    "A Bakong merchant account ID must be configured before generating a KHQR");
+        }
+    }
+
+    private void ensureLivePaymentsAllowed() {
+        if (!properties.isProduction()) {
+            return;
+        }
+        if (!properties.isEnabled()) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "BAKONG_PAYMENT_DISABLED",
                     "Live Bakong payments are disabled by configuration");
+        }
+        if (properties.apiToken() == null || properties.apiToken().isBlank()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "BAKONG_TOKEN_MISSING",
+                    "Live Bakong payments are enabled but BAKONG_TOKEN/BAKONG_API_TOKEN is not configured");
         }
     }
 

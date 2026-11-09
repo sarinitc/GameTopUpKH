@@ -190,6 +190,11 @@ public class PaymentServiceImpl implements PaymentService {
             return resume(existing.get(), provider);
         }
 
+        // Refuse before reserving a payment row. Otherwise a disabled or
+        // unconfigured Bakong deployment leaves the order's only payment row in
+        // NEEDS_REVIEW and the order can never be paid after the switch is fixed.
+        bakongKhqrService.ensurePaymentCreationAvailable();
+
         Reservation reservation;
         try {
             reservation = reserve(order, customer, provider);

@@ -37,12 +37,12 @@ before returning the QR to a customer. The SDK's unused deep-link transport
 ### Architectural Principles
 
 1. **Separation of Concerns**: Generating a dynamic KHQR is not proof of payment. Payment is only confirmed (`PAID`) when verified authoritatively against the Bakong Open API.
-2. **Fail-Closed Generation**: In production, KHQR generation returns `503 BAKONG_PAYMENT_DISABLED` while `BAKONG_PAYMENT_ENABLED=false`, even if a caller reaches the Bakong endpoint. There is no placeholder or sandbox-account fallback: generation also refuses to run without a configured `BAKONG_ACCOUNT_ID`.
+2. **Fail-Closed Generation**: In production, KHQR generation returns `503 BAKONG_PAYMENT_DISABLED` while `BAKONG_PAYMENT_ENABLED=false`, even if a caller reaches the Bakong endpoint. There is no placeholder or sandbox-account fallback. The same preflight runs before a payment row is reserved, so a disabled or unconfigured deployment never leaves the order's only payment stuck in `NEEDS_REVIEW`. Production also refuses to generate when the switch is on but `BAKONG_TOKEN`/`BAKONG_API_TOKEN` is missing, because an unverifiable QR must not be shown to a payer.
 3. **Replay Protection**: The returned transaction hash (`data.hash`) is stored in both `payments.gateway_reference` and `payments.bakong_hash`. A database-level partial unique index (`uq_payments_bakong_hash`) strictly prevents reusing a transaction hash across multiple payments or orders.
 4. **Double Fulfillment Prevention**: The `COMPLETED` payment status transition is transactional. Automated fulfillment through `FulfillmentService` is triggered only after the transaction commits, using `TransactionSynchronization.afterCommit` in a `REQUIRES_NEW` boundary. Repeated verification calls return the persisted state idempotently without re-triggering fulfillment.
 5. **Defense in Depth**: Monetary amount (`BigDecimal.compareTo`), currency (`USD`/`KHR`, also accepting Bakong numeric `840`/`116`), receiving account ID (`toAccountId`), and transaction uniqueness are all strictly validated before payment is marked complete. Recipient validation fails closed: if the configured merchant account ID or the provider's `toAccountId` is missing, the payment is placed into `NEEDS_REVIEW` instead of being accepted. If any validation fails, the payment and order are placed into `NEEDS_REVIEW` for human investigation.
 6. **Rate Limiting & Cooldown**: Verification requests are protected by a configurable per-payment cooldown (`payment.reconcile.cooldown`) to protect the Bakong Open API quota and prevent excessive polling.
-7. **Account Verification**: Staff can call `GET /api/v1/admin/payments/bakong/account` to run Bakong's read-only `check_bakong_account` lookup against the configured merchant account. The result is advisory (`verified=false` on a non-zero provider response code) and no money moves.
+7. **Account Verification**: Staff can call `GET /api/v1/admin/payments/bakong/account` to run Bakong's read-only `check_bakong_account` lookup against the configured merchant account. The result is advisory (`verified=false` on a non-zero provider response code) and no money moves. This read-only lookup is allowed while `BAKONG_PAYMENT_ENABLED=false`, so the production token and receiving account can be validated **before** live payments are enabled; transaction lookups remain blocked until the switch is on.
 8. **Bounded Retries**: `payment.bakong.max-retries` (default `2`) applies only to transient read-only failures: network/timeouts and HTTP 5xx. Authentication, 4xx validation and rate-limit (429) responses are never retried.
 
 ---
@@ -278,11 +278,15 @@ stateDiagram-v2
     "accountId": "merchant@bank",
     "verified": true,
     "responseCode": 0,
-    "responseMessage": "Success"
+    "responseMessage": "Account ID exists",
+    "accountStatus": "ACTIVATED",
+    "frozen": 0,
+    "kycStatus": "FULL_KYC",
+    "canReceive": true
   }
 }
 ```
-A non-zero `responseCode` (for example `11` account not found) returns `verified: false` for investigation. Missing configuration returns `400 BAKONG_ACCOUNT_ID_MISSING`; an unreachable provider returns `502 PAYMENT_PROVIDER_UNAVAILABLE`.
+A non-zero `responseCode` (for example `11` account not found) returns `verified: false` for investigation. Missing configuration returns `400 BAKONG_ACCOUNT_ID_MISSING`; an unreachable provider returns `502 PAYMENT_PROVIDER_UNAVAILABLE`. `verified` reports existence only; live enablement also requires the eligibility fields: `accountStatus=ACTIVATED`, `frozen=0`, `kycStatus=FULL_KYC`, `canReceive=true`. Treat any missing or adverse value as a blocker.
 
 ---
 
@@ -325,7 +329,7 @@ Before activating live Bakong payments in production (`BAKONG_PAYMENT_ENABLED=tr
 
 - [ ] **Rotate Exposed Token**: Request and obtain a newly generated production Bearer token from the NBC Bakong developer portal to replace any previously compromised token.
 - [ ] **Confirm Merchant Account Verification**: Ensure NBC has completed mobile KYC / corporate account verification for the receiving Bakong Account ID.
-- [ ] **Run Account Check**: With credentials configured, call `GET /api/v1/admin/payments/bakong/account` as an admin and confirm `verified=true`. In production, all Bakong provider calls (including this read-only check) fail closed while `BAKONG_PAYMENT_ENABLED=false`, so perform the check in sandbox first, or during a short production pre-flight window with the switch on and no customer orders created.
+- [ ] **Run Account Check**: With the production token and account ID configured and `BAKONG_PAYMENT_ENABLED=false`, call `GET /api/v1/admin/payments/bakong/account` as an admin and confirm `verified=true` **and** eligibility fields: `accountStatus=ACTIVATED`, `frozen=0`, `kycStatus=FULL_KYC`, `canReceive=true`. The read-only check is intentionally available while live payments are disabled; it fails with `503 BAKONG_TOKEN_MISSING` when no token is configured and `502 PAYMENT_PROVIDER_UNAVAILABLE` when Bakong cannot be reached. Never flip the live switch just to run this check.
 - [ ] **Configure Environment Variables**:
   - `BAKONG_ENVIRONMENT=production`
   - `BAKONG_BASE_URL=https://api-bakong.nbc.gov.kh`
@@ -387,3 +391,83 @@ receiving account. Every step below is manual and reversible.
    - Export the payment, order-status-history and fulfillment records for the test order.
    - Re-disable live Bakong (`BAKONG_PAYMENT_ENABLED=false`) unless a separate decision approves ongoing collection.
    - Never paste the API token or full provider payloads containing personal data into tickets.
+
+---
+
+## 10. Troubleshooting & Operating Notes
+
+### "Live Bakong payments are disabled by configuration"
+
+That message is produced by `BakongKhqrService.ensureLivePaymentsAllowed()` when the
+resolved `payment.bakong.environment` is `production` **and** the resolved
+`payment.bakong.enabled` is `false`. It is not a provider error and it is not a
+missing-credential error: it is the production safety gate refusing to issue a
+live KHQR. Credentials alone do not enable live payments.
+
+Configuration precedence:
+
+```text
+payment.bakong.enabled = ${BAKONG_LIVE_ENABLED:${BAKONG_PAYMENT_ENABLED:false}}
+```
+
+- `BAKONG_LIVE_ENABLED`, when it exists in the environment, wins even if it is
+  empty or `false`. Leave it unset and use `BAKONG_PAYMENT_ENABLED`.
+- `PAYMENT_GATEWAY` is independent. It selects the default checkout gateway
+  (`mock`, `aba`, `bakong`); the explicit `/api/v1/orders/{orderId}/payments/bakong`
+  endpoints work regardless of it.
+- `BAKONG_ENVIRONMENT` selects the sandbox/live guard, the default base URL and
+  the domain cross-check. Keep it in lockstep with `BAKONG_BASE_URL`.
+- The database also has a unique `payments.order_id`, so a failed attempt that
+  reserved a payment could otherwise block every later attempt for that order. The
+  preflight in `PaymentServiceImpl.createBakongPayment` now prevents that.
+
+### Restore and validate in sandbox without enabling live payments
+
+```dotenv
+BAKONG_ENVIRONMENT=sandbox
+BAKONG_BASE_URL=https://sit-api-bakong.nbc.org.kh
+BAKONG_PAYMENT_ENABLED=false
+BAKONG_TOKEN=<SIT token>
+BAKONG_ACCOUNT_ID=<SIT test account>
+```
+
+Sandbox generation is allowed while the live switch is off. Live production
+payments must stay off until the merchant account, production token and NBC
+approvals are confirmed.
+
+### Historical vs current provider contract
+
+The 2020 KHQR guideline and the 2021 QR Payment Integration guide (v1.0.3) describe
+the same pull-based model used here, but their host names and token flow are older:
+
+| Topic | Older guideline | Current Open API |
+| :--- | :--- | :--- |
+| Production host | `api-bakong.nbc.org.kh` | `api-bakong.nbc.gov.kh` (developer portal + API) |
+| Sandbox host | `sit-api-bakong.nbc.org.kh` | unchanged |
+| Token | Bearer JWT obtained from the portal | Bearer JWT with a limited lifetime; renew with `POST /v1/renew_token` using the registered email |
+| Transaction check | `POST /v1/check_transaction_by_md5`, `POST /v1/check_transaction_by_hash` | same endpoints, plus `check_transaction_by_short_hash` |
+| Payment notification | none | no merchant webhook documented; verification stays pull-based |
+
+This service generates KHQR locally (no payer data leaves the server), verifies
+with `check_transaction_by_md5`, and does not auto-renew tokens. Rotate/renew the
+production token before expiry as an operational task; a `401` from Bakong is
+surfaced as an authentication failure and never retried.
+
+### Render Free spin-down
+
+Render Free can suspend an idle web service, so no in-process scheduler can
+guarantee continuous polling. The durable design is:
+
+- A payment only becomes `PAID` through a provider lookup, never through a timer.
+- Verification is idempotent and safe to repeat, and the QR lives in PostgreSQL
+  (Neon), which survives a restart.
+- When the service is awake, `PaymentReconciliationJob` picks up unresolved
+  `BAKONG` payments (including `INITIALIZING`, `PENDING` and `NEEDS_REVIEW`) and
+  passes them through the same verification state machine. It is disabled in
+  production until live payments are approved; set
+  `PAYMENT_RECONCILIATION_ENABLED=true` together with the live switch and keep
+  `payment.reconcile.cooldown` (default 30s) plus the batch size low enough for
+  the NBC quota.
+- Customer status polling is the primary wake-up path. Do not deploy an external
+  poller that hits Bakong directly, and do not reduce the cooldown to force
+  near-real-time status.

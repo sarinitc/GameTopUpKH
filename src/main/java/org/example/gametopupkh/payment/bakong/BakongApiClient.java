@@ -79,7 +79,7 @@ public class BakongApiClient {
             throw new ApiException(HttpStatus.BAD_REQUEST, "MD5_REQUIRED", "QR MD5 hash is required to check Bakong transaction");
         }
 
-        ensureProviderCallAllowed();
+        ensureTransactionCheckAllowed();
         return withRetries("check_transaction_by_md5",
                 () -> post(BakongProperties.CHECK_TRANSACTION_PATH,
                         new BakongCheckTransactionRequest(md5.trim()),
@@ -99,21 +99,34 @@ public class BakongApiClient {
                     "Bakong account ID is required to run account verification");
         }
 
-        ensureProviderCallAllowed();
+        requireToken();
         return withRetries("check_bakong_account",
                 () -> post(BakongProperties.CHECK_ACCOUNT_PATH,
                         new BakongCheckAccountRequest(accountId.trim()),
                         BakongCheckAccountResponse.class));
     }
 
-    private void ensureProviderCallAllowed() {
+    /**
+     * Transaction lookups can change a payment to COMPLETED, so production
+     * requires the explicit live-payment switch.
+     */
+    private void ensureTransactionCheckAllowed() {
         if (properties.isProduction() && !properties.isEnabled()) {
             throw new PaymentGatewayException(GATEWAY_NAME, "Live Bakong payment verification is disabled by configuration");
         }
+        requireToken();
+    }
 
+    /**
+     * The account lookup is read-only and admin-only, so it stays available while
+     * live payments are disabled. Operators need it to prove that the production
+     * token and receiving account are valid <em>before</em> flipping the switch.
+     */
+    private void requireToken() {
         String bearerToken = properties.apiToken();
-        if (properties.isEnabled() && (bearerToken == null || bearerToken.isBlank())) {
-            throw new PaymentGatewayException(GATEWAY_NAME, "Bakong API token is not configured");
+        if (bearerToken == null || bearerToken.isBlank()) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "BAKONG_TOKEN_MISSING",
+                    "Bakong API token is not configured");
         }
     }
 
