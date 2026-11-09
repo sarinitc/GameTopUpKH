@@ -18,7 +18,7 @@ no server administration, TLS is handled by Render.
 | Port | Render injects `PORT`; the app binds `${PORT:${SERVER_PORT:8082}}` |
 | Health check | `/actuator/health/readiness` (200 with `status: UP` only when the DB answers) |
 | Profiles | Image default `ENV SPRING_PROFILES_ACTIVE=prod`, overridable from the dashboard |
-| Schema | Flyway runs `V1`–`V13` on the first boot, then Hibernate validates only |
+| Schema | Flyway runs `V1`–`V14` on the first boot, then Hibernate validates only |
 | Database | External Neon PostgreSQL (`sslmode=require`), no Render disk |
 | Start command | Image `ENTRYPOINT` (`java -jar /app/application.jar`); do not override |
 
@@ -44,7 +44,7 @@ no server administration, TLS is handled by Render.
 5. **Verify:** `curl.exe --fail https://<service>.onrender.com/actuator/health`
    must return `{"groups":["liveness","readiness"],"status":"UP"}`, and the
    readiness path (the Render health check) must report `UP` after Flyway
-   finishes `V1`–`V13` on the first boot.
+   finishes `V1`–`V14` on the first boot.
 
 ```properties
 SPRING_PROFILES_ACTIVE=prod
@@ -52,15 +52,19 @@ SPRING_DATASOURCE_URL=jdbc:postgresql://<neon-host>/neondb?sslmode=require
 SPRING_DATASOURCE_USERNAME=<neon-user>
 SPRING_DATASOURCE_PASSWORD=<NEON_PASSWORD>
 JWT_SECRET=<64-plus-random-characters>
+VOLSEVER_API_KEY=<volsever-server-side-key>
+VOLSEVER_ENABLED=true
 APP_CORS_ALLOWED_ORIGINS=https://gametopupkh.cheavsaren65.workers.dev
 APP_PASSWORD_RESET_FRONTEND_BASE_URL=https://gametopupkh.cheavsaren65.workers.dev
 DB_POOL_SIZE=5
 DB_POOL_MIN_IDLE=2
 ```
 
-Do **not** set `PORT`: Render injects it. Do **not** copy the API key or gateway
-values from the local `.env`; Render runs mock commerce
-(`PAYMENT_GATEWAY=mock`, `SUPPLIER_CLIENT=mock`).
+Do **not** set `PORT`: Render injects it. Do **not** copy payment gateway or
+supplier credentials from the local `.env`; Render runs mock commerce
+(`PAYMENT_GATEWAY=mock`, `SUPPLIER_CLIENT=mock`). `VOLSEVER_API_KEY` is the
+exception: it is a server-side player-ID checker key and must be set in Render's
+environment (never in source or the frontend).
 
 > **Free tier sleeps.** The free instance suspends after ~15 minutes idle, so the
 > next request can take about 50 seconds. The data lives in Neon and is not
@@ -103,6 +107,7 @@ Required (startup fails without them):
 | `SPRING_DATASOURCE_USERNAME` | Neon user, e.g. `neondb_owner` |
 | `SPRING_DATASOURCE_PASSWORD` | the **new** Neon password |
 | `JWT_SECRET` | new random value, **32+ characters** (64+ recommended) |
+| `VOLSEVER_API_KEY` | Volsever Game ID Checker key, server-side only |
 | `APP_PASSWORD_RESET_FRONTEND_BASE_URL` | `https://your-app.vercel.app` |
 
 Recommended:
@@ -160,6 +165,31 @@ Expected: `{"groups":["liveness","readiness"],"status":"UP"}`, readiness `UP`,
 and `200` for the public games list. `/v3/api-docs` must return `401` for an
 anonymous caller: Swagger is disabled by default in `prod`, and the docs paths
 require an ADMIN token even when Springdoc is not registered.
+
+### Player ID verification smoke test
+
+`POST /api/v1/games/{slug}/player/verify` requires a signed-in user. After the
+deployment is healthy, log in and call it with a known Free Fire player ID:
+
+```powershell
+$login = Invoke-RestMethod -Method Post `
+  -Uri "https://<your-service>.onrender.com/api/v1/auth/login" `
+  -ContentType "application/json" `
+  -Body '{"identifier":"<user-email>","password":"<user-password>"}'
+
+Invoke-RestMethod -Method Post `
+  -Uri "https://<your-service>.onrender.com/api/v1/games/free-fire/player/verify" `
+  -Headers @{ Authorization = "Bearer $($login.data.accessToken)" } `
+  -ContentType "application/json" `
+  -Body '{"playerId":"686631178"}'
+```
+
+Expect `data.status = VERIFIED`, a non-empty `data.nickname`, a `data.region`,
+and `data.provider = VOLSEVER`. `GAME_NOT_FOUND` means the `games` row or
+migration `V14` is missing; `UNAVAILABLE` means the provider rejected the call
+(check the log code: `VOLSEVER_AUTH_FAILED`, `VOLSEVER_INSUFFICIENT_BALANCE`,
+`VOLSEVER_RATE_LIMITED`, `VOLSEVER_UNAVAILABLE` or `VOLSEVER_INVALID_RESPONSE`).
+The API key is never returned or logged.
 
 ### Production Swagger (opt-in, ADMIN only)
 

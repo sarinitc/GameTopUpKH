@@ -498,6 +498,89 @@ The `packagecatalog` module is scaffolded with the same layering
 (`controller`, `service`, `repository`, `entity`, `dto`) and is ready for the
 top-up package endpoints.
 
+## Player ID verification (Volsever)
+
+The authenticated player lookup endpoint is:
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| POST | `/api/v1/games/{gameSlug}/player/verify` | Resolve a player ID to its in-game nickname and region |
+
+Supported slugs are `free-fire` and `mobile-legends`. Free Fire sends only the
+player ID; Mobile Legends requires `zoneId` as well.
+
+```http
+POST /api/v1/games/free-fire/player/verify
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{"playerId":"686631178"}
+```
+
+A successful lookup returns the existing `ApiResponse` envelope with
+`data.status = VERIFIED`, the provider-supplied `nickname`, `region`,
+`provider = VOLSEVER`, and the IDs that were checked. A non-existent account
+returns `data.status = INVALID` with no nickname or region. Provider,
+authentication, balance, rate-limit, timeout and malformed-response failures
+return `data.status = UNAVAILABLE`; they never invent account details and are
+never retried automatically.
+
+The adapter uses the documented Volsever contract:
+
+- Base URL: `https://gate.volsever.com` (override with `VOLSEVER_BASE_URL`)
+- Free Fire path: `/proxy/api/game/free-fire-global?id=<playerId>`
+- Mobile Legends path: `/proxy/api/game/mobile-legends?id=<playerId>&zone=<zoneId>`
+- Authentication: `X-API-Key` request header
+
+### Configuration
+
+| Property / environment variable | Default | Purpose |
+| --- | --- | --- |
+| `VOLSEVER_API_KEY` | none | Server-side API key. Required when Volsever is enabled; never send it to a browser. |
+| `player.verification.volsever.enabled` / `VOLSEVER_ENABLED` | `false` outside `prod`, `true` in `prod` | Selects the Volsever adapter instead of the unavailable supplier fallback. |
+| `VOLSEVER_BASE_URL` | `https://gate.volsever.com` | Provider base URL. Must be HTTPS. |
+| `VOLSEVER_CONNECT_TIMEOUT` | `2s` | Connection timeout. |
+| `VOLSEVER_READ_TIMEOUT` | `4s` | Read timeout. Keep it below `PLAYER_VERIFICATION_TIMEOUT` (default `5s`). |
+
+The development mock (`player.verification.mock-enabled=true`) takes precedence
+over Volsever, so fixtures and live lookups cannot both be active. Production
+uses Volsever; if `VOLSEVER_API_KEY` is missing the application fails startup
+rather than silently reporting every player as `UNAVAILABLE`.
+
+### Free Fire catalog record
+
+Player verification resolves the game by slug before calling Volsever. A
+database without a `free-fire` row returns `GAME_NOT_FOUND`. Migration
+`V14__seed_free_fire_game.sql` idempotently inserts the canonical record
+(`name = Free Fire`, `slug = free-fire`, `requires_zone_id = false`,
+`is_active = true`). Existing rows are left unchanged; create or reactivate the
+record through the protected `POST /api/v1/admin/games` API if your environment
+intentionally manages catalog data manually.
+
+Verify the row in Neon with:
+
+```sql
+SELECT id, name, slug, is_active, requires_zone_id
+FROM public.games
+WHERE slug = 'free-fire';
+```
+
+### Production smoke test
+
+After deploying with `VOLSEVER_API_KEY` set:
+
+1. Log in and copy `data.accessToken`.
+2. Call the verification endpoint with that token and a known Free Fire ID.
+3. Expect `data.status = VERIFIED`, a non-empty nickname, a region, and
+   `data.provider = VOLSEVER`.
+
+If the response is `GAME_NOT_FOUND`, check the `games` row above and confirm
+Flyway applied `V14`. If it is `UNAVAILABLE`, check the server logs for the
+provider outcome (`VOLSEVER_AUTH_FAILED`, `VOLSEVER_INSUFFICIENT_BALANCE`,
+`VOLSEVER_RATE_LIMITED`, `VOLSEVER_UNAVAILABLE`, or
+`VOLSEVER_INVALID_RESPONSE`), the key, and the Volsever balance/quota. The key
+is intentionally redacted from logs and responses.
+
 ## Identity and authentication
 
 The `auth` module owns the `refresh_tokens` table and the token lifecycle, the `identity`

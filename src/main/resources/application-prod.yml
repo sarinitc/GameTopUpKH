@@ -111,9 +111,13 @@ fulfillment:
 
 player:
   verification:
-    # No authorized supplier lookup contract exists, so lookups report
-    # UNAVAILABLE instead of trusting fixture data.
+    # Fixture data is never trusted in production.
     mock-enabled: false
+    volsever:
+      # Volsever is the production player-ID checker. VOLSEVER_API_KEY must be
+      # present in the server environment; startup fails rather than silently
+      # reporting every player as UNAVAILABLE when the key is missing.
+      enabled: ${VOLSEVER_ENABLED:true}
 
 springdoc:
   # Disabled by default: a missing /v3/api-docs or Swagger UI resource is

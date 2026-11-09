@@ -39,6 +39,12 @@ services:
       # Required secrets.
       - key: JWT_SECRET
         sync: false
+      # Volsever Game ID Checker. The key is server-side only; production enables
+      # the adapter by default and fails startup if this value is missing.
+      - key: VOLSEVER_API_KEY
+        sync: false
+      - key: VOLSEVER_ENABLED
+        value: "true"
       # Frontend URLs
       - key: APP_PASSWORD_RESET_FRONTEND_BASE_URL
         value: https://gametopupkh.cheavsaren65.workers.dev

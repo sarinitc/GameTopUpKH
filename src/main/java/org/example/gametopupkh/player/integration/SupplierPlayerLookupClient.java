@@ -11,7 +11,8 @@ import org.springframework.stereotype.Component;
  * No endpoint, authentication scheme, or account information is guessed here.
  */
 @Component
-@ConditionalOnProperty(name = "player.verification.mock-enabled", havingValue = "false", matchIfMissing = true)
+@ConditionalOnProperty(name = {"player.verification.mock-enabled", "player.verification.volsever.enabled"},
+        havingValue = "false", matchIfMissing = true)
 public class SupplierPlayerLookupClient implements PlayerLookupClient {
 
     @Override

@@ -150,7 +150,13 @@ public class PlayerVerificationServiceImpl implements PlayerVerificationService 
             Thread.currentThread().interrupt();
             return unavailable(request.playerId(), request.zoneId());
         } catch (ExecutionException ex) {
-            log.warn("Player lookup provider failed for game {}: provider threw an exception", gameSlug);
+            if (ex.getCause() instanceof ApiException providerError) {
+                // Log only the sanitised provider code/status; never the response body or credentials.
+                log.warn("Player lookup provider failed for game {}: {} (HTTP {})", gameSlug,
+                        providerError.getCode(), providerError.getStatus().value());
+            } else {
+                log.warn("Player lookup provider failed for game {}: provider threw an exception", gameSlug);
+            }
             return unavailable(request.playerId(), request.zoneId());
         } catch (Exception ex) {
             log.warn("Player lookup failed for game {}", gameSlug);

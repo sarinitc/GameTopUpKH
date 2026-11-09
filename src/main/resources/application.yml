@@ -157,3 +157,17 @@ fulfillment:
     batch-size: ${FULFILLMENT_WORKER_BATCH_SIZE:50}
     fixed-delay: ${FULFILLMENT_WORKER_FIXED_DELAY:PT30S}
     initial-delay: ${FULFILLMENT_WORKER_INITIAL_DELAY:PT30S}
+
+player:
+  verification:
+    # Outer bound for the whole lookup. Keep it above the Volsever read timeout.
+    timeout: ${PLAYER_VERIFICATION_TIMEOUT:5s}
+    volsever:
+      # Disabled unless the deployment opts in. Production enables it by default.
+      # VOLSEVER_API_KEY comes from the backend environment, never from source.
+      enabled: ${VOLSEVER_ENABLED:false}
+      base-url: ${VOLSEVER_BASE_URL:https://gate.volsever.com}
+      free-fire-path: ${VOLSEVER_FREE_FIRE_PATH:/proxy/api/game/free-fire-global}
+      mobile-legends-path: ${VOLSEVER_MOBILE_LEGENDS_PATH:/proxy/api/game/mobile-legends}
+      connect-timeout: ${VOLSEVER_CONNECT_TIMEOUT:2s}
+      read-timeout: ${VOLSEVER_READ_TIMEOUT:4s}
