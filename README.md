@@ -557,6 +557,21 @@ database without a `free-fire` row returns `GAME_NOT_FOUND`. Migration
 record through the protected `POST /api/v1/admin/games` API if your environment
 intentionally manages catalog data manually.
 
+### Free Fire package catalog
+
+`V14` seeds only the game row, so a fresh database returns an empty list from
+`GET /api/v1/games/{gameId}/packages` and the storefront cannot start an order.
+`V15__seed_free_fire_packages.sql` idempotently inserts four active USD packages
+(`FF-100`, `FF-310`, `FF-520`, `FF-1060`) for `free-fire`. Rows are keyed by the
+unique `sku`, so re-running the migration leaves existing data unchanged. Manage
+later catalog changes through the protected `POST /api/v1/admin/packages` API.
+
+Fulfillment additionally requires an active `supplier_products` mapping for each
+package. Seeding packages alone lets an order be created; without a mapping the
+fulfillment step fails with `NO_SUPPLIER_AVAILABLE` and the order is not
+delivered. Keep `SUPPLIER_CLIENT=mock` and add mappings only when a supplier is
+approved.
+
 Verify the row in Neon with:
 
 ```sql

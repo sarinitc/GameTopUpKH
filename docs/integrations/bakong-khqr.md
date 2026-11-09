@@ -55,8 +55,10 @@ The following environment variables configure the Bakong integration:
 | :--- | :--- | :--- | :--- |
 | `BAKONG_ENVIRONMENT` | `payment.bakong.environment` | `production` | Environment mode (`production` or `sandbox`). |
 | `BAKONG_PAYMENT_ENABLED` | `payment.bakong.enabled` | `false` | Master kill-switch. Keeps live payments disabled until credentials are fully authorized. |
-| `BAKONG_BASE_URL` | `payment.bakong.base-url` | `https://api-bakong.nbc.gov.kh` for `production`, `https://sit-api-bakong.nbc.org.kh` for `sandbox` | Base URL for Bakong Open API. Validated against approved NBC domains. |
-| `BAKONG_API_TOKEN` | `payment.bakong.api-token` | `""` | Bearer API token obtained from NBC Bakong developer portal. Redacted in logs. |
+| `BAKONG_LIVE_ENABLED` | `bakong.live.enabled` / `payment.bakong.enabled` | unset | **Overrides `BAKONG_PAYMENT_ENABLED` when present.** Because the property is `${BAKONG_LIVE_ENABLED:${BAKONG_PAYMENT_ENABLED:false}}`, setting it to `false` disables Bakong even when `BAKONG_PAYMENT_ENABLED=true`. Leave it unset unless you deliberately need the alias. |
+| `BAKONG_BASE_URL` | `payment.bakong.base-url` | `https://api-bakong.nbc.gov.kh` for `production`, `https://sit-api-bakong.nbc.org.kh` for `sandbox` | Base URL for Bakong Open API. Validated against approved NBC domains. Keep it in lockstep with `BAKONG_ENVIRONMENT`: the validator accepts the sandbox host even when the environment is `production`. |
+| `BAKONG_TOKEN` | `bakong.token` / `payment.bakong.api-token` | `""` | Preferred token variable. **Takes precedence over `BAKONG_API_TOKEN`** when both are set. Redacted in logs. |
+| `BAKONG_API_TOKEN` | `payment.bakong.api-token` | `""` | Legacy alias for the bearer token obtained from the NBC Bakong developer portal. Redacted in logs. |
 | `BAKONG_ACCOUNT_ID` | `payment.bakong.account-id` | `""` | Merchant receiving Bakong account ID (e.g. `merchant@bank` or mobile number). |
 | `BAKONG_MERCHANT_NAME` | `payment.bakong.merchant-name` | `GameTopUp-KH` | Display name of the store appearing on payer banking apps (max 25 chars). |
 | `BAKONG_MERCHANT_CITY` | `payment.bakong.merchant-city` | `Phnom Penh` | Merchant city for EMVCo Tag 60 (max 15 chars). |

@@ -18,7 +18,7 @@ no server administration, TLS is handled by Render.
 | Port | Render injects `PORT`; the app binds `${PORT:${SERVER_PORT:8082}}` |
 | Health check | `/actuator/health/readiness` (200 with `status: UP` only when the DB answers) |
 | Profiles | Image default `ENV SPRING_PROFILES_ACTIVE=prod`, overridable from the dashboard |
-| Schema | Flyway runs `V1`–`V14` on the first boot, then Hibernate validates only |
+| Schema | Flyway runs `V1`–`V15` on the first boot, then Hibernate validates only |
 | Database | External Neon PostgreSQL (`sslmode=require`), no Render disk |
 | Start command | Image `ENTRYPOINT` (`java -jar /app/application.jar`); do not override |
 
@@ -44,7 +44,7 @@ no server administration, TLS is handled by Render.
 5. **Verify:** `curl.exe --fail https://<service>.onrender.com/actuator/health`
    must return `{"groups":["liveness","readiness"],"status":"UP"}`, and the
    readiness path (the Render health check) must report `UP` after Flyway
-   finishes `V1`–`V14` on the first boot.
+   finishes `V1`–`V15` on the first boot.
 
 ```properties
 SPRING_PROFILES_ACTIVE=prod
